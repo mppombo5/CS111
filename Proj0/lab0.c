@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <getopt.h>
 
-const unsigned int BYTE_BUFFER_SIZE = 512;
+const size_t BYTE_BUFFER_SIZE = 1024;
 
 int main() {
     // read into a larger buffer so we don't have to make a syscall for EVERY single byte
