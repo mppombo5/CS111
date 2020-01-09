@@ -137,7 +137,8 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-void handle_sigsegv(int sig) {
+// signal handlers take in an int as an argument, but we don't use it
+void handle_sigsegv(int sig __attribute__((unused))) {
     fprintf(stderr, "%s: congratulations! You've successfully crashed the program.\n", progName);
     fprintf(stderr, "%s: segmentation fault detected. Terminating with status code 4.\n", progName);
     exit(4);
