@@ -11,6 +11,8 @@ const char* progName = "lab0";
 const size_t BYTE_BUFFER_SIZE = 1024;
 const char* usageMsg = "usage: lab0 [--input=filename] [--output=filename] [--catch] [--segfault]";
 
+void handle_sigsegv(int sig);
+
 int main(int argc, char** argv) {
     // variables to manipulate with options
     int usesInput = 0;
@@ -46,7 +48,6 @@ int main(int argc, char** argv) {
                 break;
             case 'c':
                 catchCrash = 1;
-                printf("option -c was passed\n");
                 break;
             // if '?' is returned
             default:
@@ -90,6 +91,12 @@ int main(int argc, char** argv) {
     }
 
     // register handler
+    if (catchCrash) {
+        if (signal(SIGSEGV, &handle_sigsegv) == SIG_ERR) {
+            fprintf(stderr, "%s: error registering signal handler: %s\n", progName, strerror(errno));
+            exit(4);
+        }
+    }
 
     // handle --segfault option
     // this will be fun
@@ -128,4 +135,10 @@ int main(int argc, char** argv) {
     }
 
     return 0;
+}
+
+void handle_sigsegv(int sig) {
+    fprintf(stderr, "%s: congratulations! You've successfully crashed the program.\n", progName);
+    fprintf(stderr, "%s: segmentation fault detected. Terminating with status code 4.\n", progName);
+    exit(4);
 }
