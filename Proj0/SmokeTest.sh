@@ -86,9 +86,6 @@ if [[ $? -ne 4 ]]; then
     exit 1
 fi
 
-
-
-rm -rf $infile
-rm -rf $outfile
+rm -rf $infile $outfile
 
 echo 'All smoke tests passed!'
