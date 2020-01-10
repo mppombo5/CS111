@@ -122,18 +122,6 @@ int main(int argc, char** argv) {
         charsRead = read(STDIN_FILENO, outbuf, BYTE_BUFFER_SIZE);
     }
 
-    // close input file if one was specified
-    if (usesInput && close(STDIN_FILENO) == -1) {
-        fprintf(stderr, "%s: error in argument --input, while closing %s: %s\n", progName, infile, strerror(errno));
-        exit(2);
-    }
-
-    // close output file if one was specified
-    if (usesOutput && close(STDOUT_FILENO) == -1) {
-        fprintf(stderr, "%s: error in argument --output, while closing %s: %s\n", progName, outfile, strerror(errno));
-        exit(3);
-    }
-
     return 0;
 }
 
