@@ -1,16 +1,14 @@
 # NAME: Matthew Pombo
 # EMAIL: mppombo5@gmail.com
-# ID: 405-140-036
+# ID: 405140036
 
-madefiles = lab0.o lab0 lab0.tar.gz
-tarfiles = lab0.c Makefile README SmokeTest.sh
+id = 405140036
+madefiles = lab0 lab0-$(id).tar.gz
+tarfiles = lab0.c Makefile README SmokeTest.sh breakpoint.png backtrace.png
 
 # default target
-default: lab0.o
-	gcc lab0.o -o lab0 -Wall -Wextra
-
-lab0.o: lab0.c
-	gcc -c lab0.c
+default: lab0.c
+	gcc -g lab0.c -o lab0 -Wall -Wextra
 
 .PHONY: clean
 clean:
@@ -20,6 +18,5 @@ clean:
 check:
 	bash SmokeTest.sh
 
-.PHONY: dist
-dist:
-	tar -cvzf lab0.tar.gz $(tarfiles)
+dist: lab0
+	tar -cvzf lab0-$(id).tar.gz $(tarfiles)

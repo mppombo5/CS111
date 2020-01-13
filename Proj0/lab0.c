@@ -1,3 +1,8 @@
+/* NAME: Matthew Pombo
+ * EMAIL: mppombo5@gmail.com
+ * ID: 405140036
+ */
+
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
@@ -12,6 +17,7 @@ const size_t BYTE_BUFFER_SIZE = 1024;
 const char* usageMsg = "usage: lab0 [--input=filename] [--output=filename] [--catch] [--segfault]";
 
 void handle_sigsegv(int sig);
+void crashandburn();
 
 int main(int argc, char** argv) {
     // variables to manipulate with options
@@ -101,8 +107,7 @@ int main(int argc, char** argv) {
     // handle --segfault option
     // this will be fun
     if (crashProg) {
-        int* numbah = NULL;
-        *numbah = 420;
+        crashandburn();
     }
 
     // read into a larger buffer so we don't have to make a syscall for EVERY single byte
@@ -130,4 +135,9 @@ void handle_sigsegv(int sig __attribute__((unused))) {
     fprintf(stderr, "%s: congratulations! You've successfully crashed the program.\n", progName);
     fprintf(stderr, "%s: segmentation fault detected. Terminating with status code 4.\n", progName);
     exit(4);
+}
+
+void crashandburn() {
+    int* numbah = NULL;
+    *numbah = 420;
 }

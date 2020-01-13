@@ -4,23 +4,23 @@ progName='lab0'
 testStr1='Hello there!'
 testStr2='General Kenobi!'
 
-echo $testStr1 | ./$progName | grep -Eq "^${testStr1}$"
+echo "$testStr1" | ./$progName | grep -Eq "^${testStr1}$"
 if [[ $? -ne 0 ]]; then
     echo 'Error: stdin not correctly redirected to stdout.' >&2
     exit 1
 fi
 
-echo $testStr2 | ./$progName | grep -Eq "^${testStr2}$"
+echo "$testStr2" | ./$progName | grep -Eq "^${testStr2}$"
 if [[ $? -ne 0 ]]; then
     echo 'Error: stdin not correctly redirected to stdout.' >&2
 fi
 
 infile=$(mktemp)
-echo $testStr1 > $infile
+echo "$testStr1" > "$infile"
 ./$progName --input=$infile | grep -Eq "^${testStr1}$"
 if [[ $? -ne 0 ]]; then
     echo 'Error: file contents not correctly copied to stdout.' >&2
-    rm -rf $infile
+    rm -rf "$infile"
     exit 1
 fi
 
