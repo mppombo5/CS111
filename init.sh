@@ -2,4 +2,4 @@
 
 echo "NAME: Matthew Pombo" > README
 echo "EMAIL: mppombo5@gmail.com" >> README
-echo "ID: 405-140-036" >> README
+echo "ID: 405140036" >> README
