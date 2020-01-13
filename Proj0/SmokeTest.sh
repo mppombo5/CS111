@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# NAME: Matthew Pombo
+# EMAIL: mppombo5@gmail.com
+# ID: 405140036
+
 progName='lab0'
 testStr1='Hello there!'
 testStr2='General Kenobi!'

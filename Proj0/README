@@ -2,5 +2,22 @@ NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
 
-Better getopt_long tutorial:
+Included files:
+- lab0.c, the source C code for the lab0 executable
+- Makefile, which contains all targets for making and running the different parts of the project
+- SmokeTest.sh, a shell script that runs my smoke tests for the lab0 executable
+- backtrace.png, a screenshot of the backtrace from the segfault caused by the --segfault option
+- breakpoint.png, a screenshot of the environment of the program at the breakpoint that was set. Also includes evaluation of the null pointer I dereferenced.
+
+Smoke tests:
+- two tests where I pipe an echo statement into grep and check the return value
+- two tests where I use a temporary file as input and grep the output
+- two tests where I pipe an echo statement into an outfile and grep the output of 'cat'ing the file
+- one test where I used both an infile and an outfile, and checked the result of running diff -u on the two files
+- three statements where I denote that a segfault is supposed to occur
+- three tests where I catch the segfault and make sure the return value was 4
+
+The man page for getopt is impossibly confusing, but I found a better tutorial (still from the official GNU website) here:
 https://www.gnu.org/software/libc/manual/html_node/Getopt-Long-Options.html#Getopt-Long-Options
+
+Also, my two screenshots might show more information than expected; this is because I have a program called GDB Dashboard installed on my Linux machine which displays more information for convenience.
