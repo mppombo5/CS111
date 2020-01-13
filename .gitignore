@@ -1,6 +1,10 @@
 # Custom ignore targets
 *.tar.gz
 
+### Project 0 ###
+Proj0/*.png
+Proj0/lab0
+
 # Created by https://www.gitignore.io/api/c,git,macos
 # Edit at https://www.gitignore.io/?templates=c,git,macos
 
