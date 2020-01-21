@@ -1,5 +1,6 @@
 # Custom ignore targets
 *.tar.gz
+Slides
 
 ### Project 0 ###
 Proj0/*.png
