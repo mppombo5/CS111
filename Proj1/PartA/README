@@ -1,0 +1,9 @@
+NAME: Matthew Pombo
+EMAIL: mppombo5@gmail.com
+ID: 405140036
+
+Files included:
+- lab1a.c: C source file containing my implementation for lab 1A.
+- Makefile: the Makefile used to compile the program, build the distrubution tarball, and clean the files that have been made.
+- this README
+
