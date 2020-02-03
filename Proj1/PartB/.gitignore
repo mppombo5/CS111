@@ -1,0 +1,7 @@
+# Reference files and binary output
+client.c
+server.c
+lab1a_ref.c
+lab1b-client
+lab1b-server
+zpipe.c

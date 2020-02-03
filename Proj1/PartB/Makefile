@@ -11,6 +11,12 @@ default: lab1b-client.c lab1b-server.c
 	gcc lab1b-client.c -o lab1b-client $(opts)
 	gcc lab1b-server.c -o lab1b-server $(opts)
 
+client: lab1b-client.c
+	gcc lab1b-client.c -o lab1b-client $(opts)
+
+server: lab1b-server.c
+	gcc lab1b-server.c -o lab1b-server $(opts)
+
 .PHONY: dist
 dist:
 	tar -cvzf lab1b-$(UID).tar.gz $(tarfiles)
