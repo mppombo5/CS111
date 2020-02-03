@@ -16,11 +16,16 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <netinet/in.h>
+#include <zlib.h>
 
-#define KEYBUF_SIZE 64
-#define SHELLBUF_SIZE 512
+#define SRV_KEYBUF_SIZE 64
+#define SRV_SHELLBUF_SIZE 512
 #define CTRL_D 0x04
 #define CTRL_C 0x03
+
+// zlib-specific macros
+#define SET_BINARY_MODE(file)
+#define SRV_KEYBUF_SIZE_CMP 1024
 
 // just to make my life easier
 #ifndef bool
@@ -36,6 +41,7 @@
 const char* progName = "lab1b-server";
 const char* usage = "lab1b-server --port=NUM [--compress]";
 void killProg(const char* msg);
+void zerr(int ret);
 
 int main(int argc, char** argv) {
     bool suppliedPort = false;
@@ -153,6 +159,18 @@ int main(int argc, char** argv) {
     struct pollfd* sockPoll = fds;
     struct pollfd* shellPoll = fds + 1;
 
+    // inflate - prefixed with 'i'
+    int iret;
+    unsigned ibytes;
+    z_stream istrm;
+
+    int keyBufSize = compress ? SRV_KEYBUF_SIZE_CMP : SRV_KEYBUF_SIZE;
+    unsigned char keyBuf[keyBufSize];
+    unsigned char shellBuf[SRV_SHELLBUF_SIZE];
+
+    // compression buffers
+    unsigned char iout[SRV_KEYBUF_SIZE];
+
     while (true) {
         int ret = poll(fds, 2, 0);
         if (ret == -1) {
@@ -164,35 +182,119 @@ int main(int argc, char** argv) {
             killProg("Received POLLERR from poll() call on keyboard");
         }
         if (sockPoll->revents & POLLIN) {
+            if (debug) {
+                fprintf(stderr, "got char from kb\r\n");
+            }
             // got input from socket, send it to shell
-            char keyBuf[KEYBUF_SIZE];
-            int charsRead = read(sockfd, keyBuf, KEYBUF_SIZE);
+            int charsRead = read(sockfd, keyBuf, SRV_KEYBUF_SIZE);
             if (charsRead == -1) {
                 killProg("Error in read() call on client");
             }
 
-            // process all chars from client
-            for (int i = 0; i < charsRead; i++) {
-                char curChar = keyBuf[i];
-                // no need to handle <cr><lf>, already translated in client
-                if (curChar == CTRL_C) {
-                    int killRet = kill(pid, SIGINT);
-                    if (killRet == -1) {
-                        killProg("Error sending SIGINT to shell");
-                    }
-                    if (debug) {
-                        fprintf(stderr, "SIGINT sent to shell");
-                    }
-                    break;
+            // decompression session
+            if (compress) {
+                // allocate inflate state
+                istrm.zalloc = Z_NULL;
+                istrm.zfree = Z_NULL;
+                istrm.opaque = Z_NULL;
+                iret = inflateInit(&istrm);
+                if (iret != Z_OK) {
+                    zerr(iret);
+                    exit(1);
                 }
-                else if (curChar == CTRL_D) {
-                    if (close(pWrite) == -1) {
-                        killProg("Unable to close pipe to shell");
+                istrm.avail_in = charsRead;
+                istrm.next_in = keyBuf;
+
+                istrm.avail_out = SRV_KEYBUF_SIZE;
+                istrm.next_out = iout;
+
+                iret = inflate(&istrm, Z_FINISH);
+                if (debug) {
+                    fprintf(stderr, "inflate()\r\n");
+                }
+                switch(iret) {
+                    case Z_NEED_DICT:
+                        ret = Z_DATA_ERROR;     /* and fall through */
+                                __attribute__((fallthrough));
+                    case Z_DATA_ERROR:
+                    case Z_MEM_ERROR:
+                        (void) inflateEnd(&istrm);
+                        zerr(iret);
+                        exit(1);
+                }
+
+                ibytes = SRV_KEYBUF_SIZE - istrm.avail_out;
+                if (debug) {
+                    fprintf(stderr, "ibytes is %d\r\n", ibytes);
+                }
+                // at this point, iout should have the decompressed data
+                for (unsigned int i = 0; i < 1; i++) {
+                    unsigned char curChar = iout[i];
+                    if (curChar == CTRL_C) {
+                        int killRet = kill(pid, SIGINT);
+                        if (killRet == -1) {
+                            killProg("Error sending SIGINT to shell");
+                        }
+                        if (debug) {
+                            fprintf(stderr, "^C\r\nSIGINT sent to shell\r\n");
+                        }
+                        break;
+                    }
+                    else if (curChar == CTRL_D) {
+                        if (close(pWrite) == -1) {
+                            killProg("Unable to close pipe to shell");
+                        }
+                        if (debug) {
+                            fprintf(stderr, "^D\r\n");
+                        }
+                    }
+                    else if (curChar == '\r' || curChar == '\n') {
+                        if (write(pWrite, "\n", 1) == -1) {
+                            killProg("Error writing newline to shell");
+                        }
+                        if (debug) {
+                            fprintf(stderr, "\r\n");
+                        }
+                    }
+                    else {
+                        if (write(pWrite, iout + i, 1) == -1) {
+                            killProg("Error writing char to shell");
+                        }
+                        if (debug) {
+                            fprintf(stderr, "%c\r\n", curChar);
+                        }
                     }
                 }
-                else {
-                    if (write(pWrite, keyBuf + i, 1) == -1) {
-                        killProg("Error writing char to shell");
+                (void) inflateEnd(&istrm);
+            }
+            else {
+                // process all chars from client
+                for (int i = 0; i < charsRead; i++) {
+                    unsigned char curChar = keyBuf[i];
+                    if (curChar == CTRL_C) {
+                        int killRet = kill(pid, SIGINT);
+                        if (killRet == -1) {
+                            killProg("Error sending SIGINT to shell");
+                        }
+                        if (debug) {
+                            fprintf(stderr, "SIGINT sent to shell");
+                        }
+                        break;
+                    }
+                    else if (curChar == CTRL_D) {
+                        if (close(pWrite) == -1) {
+                            killProg("Unable to close pipe to shell");
+                        }
+                    }
+                    else if (curChar == '\r' || curChar == '\n') {
+                        if (write(pWrite, "\n", 1) == -1) {
+                            killProg("Error writing newline to shell");
+                        }
+                    }
+                    else {
+                        if (write(pWrite, keyBuf + i, 1) == -1) {
+                            killProg("Error writing char to shell");
+                        }
                     }
                 }
             }
@@ -219,8 +321,7 @@ int main(int argc, char** argv) {
             killProg("Received POLLERR from poll() on shell");
         }
         if (shellPoll->revents & POLLIN) {
-            char shellBuf[SHELLBUF_SIZE];
-            int charsRead = read(pRead, shellBuf, SHELLBUF_SIZE);
+            int charsRead = read(pRead, shellBuf, SRV_SHELLBUF_SIZE);
             if (charsRead == -1) {
                 killProg("Error in read() to shell");
             }
@@ -231,7 +332,7 @@ int main(int argc, char** argv) {
         }
         if (shellPoll->revents & POLLHUP) {
             if (debug) {
-                fprintf(stderr, "POLLHUP from shell");
+                fprintf(stderr, "POLLHUP from shell\r\n");
             }
 
             int status;
@@ -254,3 +355,26 @@ void killProg(const char* msg) {
     exit(1);
 }
 
+// report a zlib or I/O error
+void zerr(int ret) {
+    fputs("zpipe: ", stderr);
+    switch (ret) {
+        case Z_ERRNO:
+            if (ferror(stdin))
+                fputs("error reading stdin\n", stderr);
+            if (ferror(stdout))
+                fputs("error writing stdout\n", stderr);
+            break;
+        case Z_STREAM_ERROR:
+            fputs("invalid compression level\n", stderr);
+            break;
+        case Z_DATA_ERROR:
+            fputs("invalid or incomplete deflate data\n", stderr);
+            break;
+        case Z_MEM_ERROR:
+            fputs("out of memory\n", stderr);
+            break;
+        case Z_VERSION_ERROR:
+            fputs("zlib version mismatch!\n", stderr);
+    }
+}

@@ -15,11 +15,16 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <zlib.h>
+#include <assert.h>
 
-#define READ_BUF_SIZE 512
-#define KEYBUF_SIZE 64
+#define CLI_READBUF_SIZE 512
+#define CLI_KEYBUF_SIZE 64
 #define CTRL_D 0x04
 #define CTRL_C 0x03
+
+// zlib-specific
+#define SET_BINARY_MODE(file)
 
 // just to make my life easier (long live C++)
 #ifndef bool
@@ -35,6 +40,7 @@
 const char* progName = "lab1b-client";
 const char* usage = "lab1b-client --port=NUM [--log=FILENAME] [--compress] [--host=HOSTNAME]";
 void killProg(const char* msg, bool sockInUse, int sockfd);
+void zerr(int ret);
 
 // separate (global) termios struct to restore in atexit()
 struct termios initSettings;
@@ -148,6 +154,17 @@ int main(int argc, char** argv) {
     struct pollfd* keyPoll = fds;
     struct pollfd* sockPoll = fds + 1;
 
+    // deflate - prefixed with 'd'
+    int dret;
+    unsigned dbytes;
+    z_stream dstrm;
+
+    unsigned char keyBuf[CLI_KEYBUF_SIZE];
+    unsigned char srvBuf[CLI_READBUF_SIZE];
+
+    // compression buffers
+    unsigned char dout[CLI_KEYBUF_SIZE];
+
     while (true) {
         int ret = poll(fds, 2, 0);
         if (ret == -1) {
@@ -160,99 +177,127 @@ int main(int argc, char** argv) {
         }
         if (keyPoll->revents & POLLIN) {
             // got input from keyboard, deal with it
-            char keyBuf[KEYBUF_SIZE];
-            int charsRead = read(STDIN_FILENO, keyBuf, KEYBUF_SIZE);
+            int charsRead = read(STDIN_FILENO, keyBuf, CLI_KEYBUF_SIZE);
             if (charsRead == -1) {
                 killProg("Error in read() call on keyboard", sockUsed, sockfd);
             }
 
-            if (useLog) {
+            // compression session
+            if (compress) {
+                /* allocate deflate state */
+                dstrm.zalloc = Z_NULL;
+                dstrm.zfree = Z_NULL;
+                dstrm.opaque = Z_NULL;
+                dret = deflateInit(&dstrm, Z_DEFAULT_COMPRESSION);
+                if (dret != Z_OK) {
+                    zerr(dret);
+                    exit(1);
+                }
+                dstrm.avail_in = charsRead;
+                dstrm.next_in = keyBuf;
+
+                dstrm.avail_out = CLI_KEYBUF_SIZE;
+                dstrm.next_out = dout;
+
+                dret = deflate(&dstrm, Z_FINISH);
+                if (debug) {
+                    fprintf(stderr, "call to deflate()\r\n");
+                }
+                assert(dret != Z_STREAM_ERROR);
+                dbytes = CLI_KEYBUF_SIZE - dstrm.avail_out;
+
+                if (debug) {
+                    fprintf(stderr, "avail_out = %d\r\n", dstrm.avail_out);
+                    fprintf(stderr, "dbytes is %d\r\n", dbytes);
+                    for (unsigned int i = 0; i < dbytes; i++) {
+                        fprintf(stderr, "%c", dout[i]);
+                    }
+                    fprintf(stderr, "\r\n");
+                }
+
+                if (useLog) {
+                    fprintf(logFile, "SENT %d bytes: ", dbytes);
+                    for (int i = 0; i < dbytes; i++) {
+                        fprintf(logFile, "%c", dout[i]);
+                    }
+                    fprintf(logFile, "\n");
+                }
+                int bytesSent = write(sockfd, dout, dbytes);
+                if (bytesSent == -1) {
+                    (void) deflateEnd(&dstrm);
+                    killProg("Error sending compressed bytes to socket", sockUsed, sockfd);
+                }
+                if (bytesSent != (int) dbytes) {
+                    (void) deflateEnd(&dstrm);
+                    zerr(Z_ERRNO);
+                    exit(1);
+                }
+                (void) deflateEnd(&dstrm);
+            }
+
+            if (!compress && useLog) {
                 fprintf(logFile, "SENT %d bytes: ", charsRead);
             }
             // process all chars read from keyBuf
             for (int i = 0; i < charsRead; i++) {
-                char curChar = keyBuf[i];
-                // lf/cr -> lf
-                if (curChar == '\r' || curChar == '\n') {
-                    if (write(STDOUT_FILENO, "\r\n", 2) == -1) {
-                        killProg("Error writing \\r\\n to stdout from keyboard", sockUsed, sockfd);
-                    }
+                unsigned char curChar = keyBuf[i];
 
-                    if (write(sockfd, "\n", 1) == -1) {
-                        close(sockfd);
-                        killProg("Error writing \\n to server from keyboard", sockUsed, sockfd);
-                    }
-                    else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", '\n');
-                        }
-                    }
+                // log to logFile
+                if (!compress && useLog) {
+                    fprintf(logFile, "%c", curChar);
                 }
-                else if (curChar == CTRL_D) {
+
+                // handle lf/cr -> lf in server code
+                if (curChar == CTRL_D) {
                     if (write(STDOUT_FILENO, "^D", 2) == -1) {
-                        close(sockfd);
                         killProg("Error writing ^D to stdout from keyboard", sockUsed, sockfd);
                     }
 
-                    if (write(sockfd, keyBuf + i, 1) == -1) {
-                        close(sockfd);
+                    if (!compress && write(sockfd, keyBuf + i, 1) == -1) {
                         killProg("Error writing ^D to server from keyboard", sockUsed, sockfd);
-                    }
-                    else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", curChar);
-                        }
                     }
                 }
                 else if (curChar == CTRL_C) {
                     if (write(STDOUT_FILENO, "^C", 2) == -1) {
-                        close(sockfd);
                         killProg("Error writing ^C to stdout from keyboard", sockUsed, sockfd);
                     }
 
-                    if (write(sockfd, keyBuf + i, 1) == -1) {
-                        close(sockfd);
+                    if (!compress && write(sockfd, keyBuf + i, 1) == -1) {
                         killProg("Error writing ^C to server from keyboard", sockUsed, sockfd);
                     }
-                    else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", curChar);
-                        }
+                }
+                else if (curChar == '\r' || curChar == '\n') {
+                    if (write(STDOUT_FILENO, "\r\n", 2) == -1) {
+                        killProg("Error writing \\r\\n to stdout", sockUsed, sockfd);
+                    }
+
+                    if (!compress && write(sockfd, keyBuf + i, 1) == -1) {
+                        killProg("Error writing \\r\\n to server", sockUsed, sockfd);
                     }
                 }
                 else {
                     if (write(STDOUT_FILENO, keyBuf + i, 1) == -1) {
-                        close(sockfd);
                         killProg("Error writing character to stdout", sockUsed, sockfd);
                     }
 
-                    if (write(sockfd, keyBuf + i, 1) == -1) {
-                        close(sockfd);
+                    if (!compress && write(sockfd, keyBuf + i, 1) == -1) {
                         killProg("Error writing character to server", sockUsed, sockfd);
-                    }
-                    else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", curChar);
-                        }
                     }
                 }
             }
             // append a newline after each log line
-            if (useLog) {
+            if (!compress && useLog) {
                 fprintf(logFile, "\n");
             }
         }
 
         // deal with output from server
         if (sockPoll->revents & POLLERR) {
-            close(sockfd);
             killProg("Received POLLERR from poll on server", sockUsed, sockfd);
         }
         if (sockPoll->revents & POLLIN) {
-            char srvBuf[READ_BUF_SIZE];
-            int charsRead = read(sockfd, srvBuf, READ_BUF_SIZE);
+            int charsRead = read(sockfd, srvBuf, CLI_READBUF_SIZE);
             if (charsRead == -1) {
-                close(sockfd);
                 killProg("Error read()-ing from server", sockUsed, sockfd);
             }
 
@@ -322,3 +367,26 @@ void restoreAttr() {
     }
 }
 
+// report a zlib or I/O error
+void zerr(int ret) {
+    fputs("zpipe: ", stderr);
+    switch (ret) {
+        case Z_ERRNO:
+            if (ferror(stdin))
+                fputs("error reading stdin\n", stderr);
+            if (ferror(stdout))
+                fputs("error writing stdout\n", stderr);
+            break;
+        case Z_STREAM_ERROR:
+            fputs("invalid compression level\n", stderr);
+            break;
+        case Z_DATA_ERROR:
+            fputs("invalid or incomplete deflate data\n", stderr);
+            break;
+        case Z_MEM_ERROR:
+            fputs("out of memory\n", stderr);
+            break;
+        case Z_VERSION_ERROR:
+            fputs("zlib version mismatch!\n", stderr);
+    }
+}

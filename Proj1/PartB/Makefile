@@ -3,7 +3,7 @@
 # EMAIL: mppombo5@gmail.com
 
 UID = 405140036
-opts = -Wall -Wextra
+opts = -Wall -Wextra -lz
 tarfiles = lab1b-client.c lab1b-server.c README Makefile
 madefiles = lab1b-client lab1b-server lab1b-$(UID).tar.gz
 
