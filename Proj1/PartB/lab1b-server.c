@@ -17,15 +17,15 @@
 #include <sys/wait.h>
 #include <netinet/in.h>
 #include <zlib.h>
+#include <assert.h>
 
-#define SRV_KEYBUF_SIZE 64
-#define SRV_SHELLBUF_SIZE 512
+#define SRV_KEYBUF_SIZE 256
+#define SRV_SHELLBUF_SIZE 131068
 #define CTRL_D 0x04
 #define CTRL_C 0x03
 
 // zlib-specific macros
 #define SET_BINARY_MODE(file)
-#define SRV_KEYBUF_SIZE_CMP 1024
 
 // just to make my life easier
 #ifndef bool
@@ -164,16 +164,22 @@ int main(int argc, char** argv) {
     unsigned ibytes;
     z_stream istrm;
 
-    int keyBufSize = compress ? SRV_KEYBUF_SIZE_CMP : SRV_KEYBUF_SIZE;
-    unsigned char keyBuf[keyBufSize];
+    // deflate - prefixed with 'd'
+    int dret;
+    unsigned dbytes;
+    z_stream dstrm;
+
+
+    unsigned char keyBuf[SRV_KEYBUF_SIZE];
     unsigned char shellBuf[SRV_SHELLBUF_SIZE];
 
     // compression buffers
     unsigned char iout[SRV_KEYBUF_SIZE];
+    unsigned char dout[SRV_SHELLBUF_SIZE];
 
     while (true) {
-        int ret = poll(fds, 2, 0);
-        if (ret == -1) {
+        int pollRet = poll(fds, 2, 0);
+        if (pollRet == -1) {
             killProg("Error in poll() syscall");
         }
 
@@ -183,7 +189,7 @@ int main(int argc, char** argv) {
         }
         if (sockPoll->revents & POLLIN) {
             if (debug) {
-                fprintf(stderr, "got char from kb\r\n");
+                //fprintf(stderr, "got char from kb\r\n");
             }
             // got input from socket, send it to shell
             int charsRead = read(sockfd, keyBuf, SRV_KEYBUF_SIZE);
@@ -197,6 +203,8 @@ int main(int argc, char** argv) {
                 istrm.zalloc = Z_NULL;
                 istrm.zfree = Z_NULL;
                 istrm.opaque = Z_NULL;
+                istrm.avail_in = 0;
+                istrm.next_in = Z_NULL;
                 iret = inflateInit(&istrm);
                 if (iret != Z_OK) {
                     zerr(iret);
@@ -210,11 +218,11 @@ int main(int argc, char** argv) {
 
                 iret = inflate(&istrm, Z_FINISH);
                 if (debug) {
-                    fprintf(stderr, "inflate()\r\n");
+                    //fprintf(stderr, "inflate()\r\n");
                 }
                 switch(iret) {
                     case Z_NEED_DICT:
-                        ret = Z_DATA_ERROR;     /* and fall through */
+                        iret = Z_DATA_ERROR;     /* and fall through */
                                 __attribute__((fallthrough));
                     case Z_DATA_ERROR:
                     case Z_MEM_ERROR:
@@ -225,10 +233,10 @@ int main(int argc, char** argv) {
 
                 ibytes = SRV_KEYBUF_SIZE - istrm.avail_out;
                 if (debug) {
-                    fprintf(stderr, "ibytes is %d\r\n", ibytes);
+                    //fprintf(stderr, "ibytes = %d\r\n", ibytes);
                 }
                 // at this point, iout should have the decompressed data
-                for (unsigned int i = 0; i < 1; i++) {
+                for (unsigned int i = 0; i < ibytes; i++) {
                     unsigned char curChar = iout[i];
                     if (curChar == CTRL_C) {
                         int killRet = kill(pid, SIGINT);
@@ -326,8 +334,66 @@ int main(int argc, char** argv) {
                 killProg("Error in read() to shell");
             }
 
-            if (write(sockfd, shellBuf, charsRead) == -1) {
-                killProg("Error writing chars to socket");
+            // compression to client
+            if (compress) {
+                dstrm.zalloc = Z_NULL;
+                dstrm.zfree = Z_NULL;
+                dstrm.opaque = Z_NULL;
+                dret = deflateInit(&dstrm, Z_DEFAULT_COMPRESSION);
+                if (dret != Z_OK) {
+                    if (debug) {
+                        fprintf(stderr, "deflateInit() NOT ok\r\n");
+                    }
+                    zerr(dret);
+                    exit(1);
+                }
+                if (debug) {
+                    fprintf(stderr, "deflateInit() ok\r\n");
+                }
+                dstrm.avail_in = charsRead;
+                dstrm.next_in = shellBuf;
+
+                dstrm.avail_out = SRV_SHELLBUF_SIZE;
+                dstrm.next_out = dout;
+
+                dret = deflate(&dstrm, Z_FINISH);
+                if (debug) {
+                    fprintf(stderr, "deflate()\r\n");
+                }
+                assert(dret != Z_STREAM_ERROR);
+                dbytes = SRV_SHELLBUF_SIZE - dstrm.avail_out;
+
+                if (debug) {
+                    fprintf(stderr, "avail_out = %d\r\n", dstrm.avail_out);
+                    fprintf(stderr, "dbytes = %d\r\n", dbytes);
+                    for (unsigned int i = 0; i < dbytes; i++) {
+                        fprintf(stderr, "%c", dout[i]);
+                    }
+                    fprintf(stderr, "\r\n");
+                }
+
+                int bytesSent = write(sockfd, dout, dbytes);
+                if (debug) {
+                    fprintf(stderr, "wrote %d bytes\r\n", bytesSent);
+                }
+                if (bytesSent == -1) {
+                    (void) deflateEnd(&dstrm);
+                    killProg("Error sending compressed bytes to client");
+                }
+                if (bytesSent != (int) dbytes) {
+                    (void) deflateEnd(&dstrm);
+                    zerr(Z_ERRNO);
+                    exit(1);
+                }
+                dret = deflateEnd(&dstrm);
+                if (dret != Z_OK) {
+                    fprintf(stderr, "DELFATE END DIDN'T WORK\r\n");
+                }
+            }
+            else {
+                if (write(sockfd, shellBuf, charsRead) == -1) {
+                    killProg("Error writing chars to socket");
+                }
             }
         }
         if (shellPoll->revents & POLLHUP) {

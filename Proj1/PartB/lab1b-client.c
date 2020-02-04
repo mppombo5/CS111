@@ -18,8 +18,8 @@
 #include <zlib.h>
 #include <assert.h>
 
-#define CLI_READBUF_SIZE 512
-#define CLI_KEYBUF_SIZE 64
+#define CLI_READBUF_SIZE 131068
+#define CLI_KEYBUF_SIZE 256
 #define CTRL_D 0x04
 #define CTRL_C 0x03
 
@@ -159,15 +159,21 @@ int main(int argc, char** argv) {
     unsigned dbytes;
     z_stream dstrm;
 
+    // inflate - prefixed with 'i'
+    int iret;
+    unsigned ibytes;
+    z_stream istrm;
+
     unsigned char keyBuf[CLI_KEYBUF_SIZE];
     unsigned char srvBuf[CLI_READBUF_SIZE];
 
     // compression buffers
     unsigned char dout[CLI_KEYBUF_SIZE];
+    unsigned char iout[CLI_READBUF_SIZE];
 
     while (true) {
-        int ret = poll(fds, 2, 0);
-        if (ret == -1) {
+        int pollRet = poll(fds, 2, 0);
+        if (pollRet == -1) {
             killProg("Error in poll() syscall", sockUsed, sockfd);
         }
 
@@ -208,7 +214,7 @@ int main(int argc, char** argv) {
 
                 if (debug) {
                     fprintf(stderr, "avail_out = %d\r\n", dstrm.avail_out);
-                    fprintf(stderr, "dbytes is %d\r\n", dbytes);
+                    fprintf(stderr, "dbytes = %d\r\n", dbytes);
                     for (unsigned int i = 0; i < dbytes; i++) {
                         fprintf(stderr, "%c", dout[i]);
                     }
@@ -217,7 +223,7 @@ int main(int argc, char** argv) {
 
                 if (useLog) {
                     fprintf(logFile, "SENT %d bytes: ", dbytes);
-                    for (int i = 0; i < dbytes; i++) {
+                    for (unsigned int i = 0; i < dbytes; i++) {
                         fprintf(logFile, "%c", dout[i]);
                     }
                     fprintf(logFile, "\n");
@@ -310,35 +316,116 @@ int main(int argc, char** argv) {
                 exit(0);
             }
 
-            if (useLog) {
-                fprintf(logFile, "RECEIVED %d bytes: ", charsRead);
+            if (debug) {
+                fprintf(stderr, "read %d chars\r\n", charsRead);
             }
-            for (int i = 0; i < charsRead; i++) {
-                char curChar = srvBuf[i];
-                // lf -> cr-lf
-                if (curChar == '\n') {
-                    if (write(STDOUT_FILENO, "\r\n", 2) == -1) {
-                        killProg("Error writing \\r\\n to stdout from server", sockUsed, sockfd);
+
+            // decompression from server
+            if (compress) {
+                if (useLog) {
+                    fprintf(stderr, "RECEIVED %d bytes: ", charsRead);
+                    for (int i = 0; i < charsRead; i++) {
+                        fprintf(stderr, "%c", srvBuf[i]);
+                    }
+                }
+                istrm.zalloc = Z_NULL;
+                istrm.zfree = Z_NULL;
+                istrm.opaque = Z_NULL;
+                istrm.avail_in = 0;
+                istrm.next_in = Z_NULL;
+                iret = inflateInit(&istrm);
+                if (iret != Z_OK) {
+                    if (debug) {
+                        fprintf(stderr, "inflateInit() NOT ok\r\n");
+                    }
+                    zerr(iret);
+                    exit(1);
+                }
+                istrm.avail_in = charsRead;
+                istrm.next_in = srvBuf;
+
+                // debugging counter
+                int i = 0;
+                do {
+                    istrm.avail_out = CLI_READBUF_SIZE;
+                    istrm.next_out = iout;
+
+                    if (debug) {
+                        fprintf(stderr, "iteration %d\r\n", i);
+                        i++;
+                    }
+                    iret = inflate(&istrm, Z_NO_FLUSH);
+                    if (debug) {
+                        fprintf(stderr, "inflate()\r\n");
+                    }
+                    switch (iret) {
+                        case Z_NEED_DICT:
+                            iret = Z_DATA_ERROR;     // and fall through
+                            __attribute__((fallthrough));
+                        case Z_DATA_ERROR:
+                            if (debug) {
+                                fprintf(stderr, "%s\r\n", istrm.msg);
+                            }
+                            __attribute__((fallthrough));
+                        case Z_MEM_ERROR:
+                            (void) inflateEnd(&istrm);
+                            zerr(iret);
+                            exit(1);
+                    }
+
+                    ibytes = CLI_READBUF_SIZE - istrm.avail_out;
+                    if (debug) {
+                        fprintf(stderr, "ibytes = %d\r\n", ibytes);
+                    }
+
+                    // iout should now have decompressed data to output
+                    for (unsigned int i = 0; i < ibytes; i++) {
+                        unsigned char curChar = iout[i];
+                        // lf -> cr-lf
+                        if (curChar == '\n') {
+                            if (write(STDOUT_FILENO, "\r\n", 2) == -1) {
+                                killProg("Error writing \\r\\n to stdout from server", sockUsed, sockfd);
+                            }
+                        } else {
+                            if (write(STDOUT_FILENO, iout + i, 1) == -1) {
+                                killProg("Error writing server output to stdout", sockUsed, sockfd);
+                            }
+                        }
+                    }
+                } while (iret != Z_STREAM_END);
+                (void) inflateEnd(&istrm);
+            }
+            else {
+                if (useLog) {
+                    fprintf(logFile, "RECEIVED %d bytes: ", charsRead);
+                }
+                for (int i = 0; i < charsRead; i++) {
+                    unsigned char curChar = srvBuf[i];
+                    // lf -> cr-lf
+                    if (curChar == '\n') {
+                        if (write(STDOUT_FILENO, "\r\n", 2) == -1) {
+                            killProg("Error writing \\r\\n to stdout from server", sockUsed, sockfd);
+                        }
+                        else {
+                            if (useLog) {
+                                fprintf(logFile, "%c", curChar);
+                            }
+                        }
                     }
                     else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", curChar);
+                        if (write(STDOUT_FILENO, srvBuf + i, 1) == -1) {
+                            killProg("Error writing server output to stdout", sockUsed, sockfd);
+                        }
+                        else {
+                            if (useLog) {
+                                fprintf(logFile, "%c", curChar);
+                            }
                         }
                     }
                 }
-                else {
-                    if (write(STDOUT_FILENO, srvBuf + i, 1) == -1) {
-                        killProg("Error writing server output to stdout", sockUsed, sockfd);
-                    }
-                    else {
-                        if (useLog) {
-                            fprintf(logFile, "%c", curChar);
-                        }
-                    }
+                if (useLog) {
+                    fprintf(logFile, "\n");
                 }
-            }
-            if (useLog) {
-                fprintf(logFile, "\n");
             }
         }
         if (sockPoll->revents & POLLHUP) {
