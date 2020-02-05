@@ -2,3 +2,11 @@ NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
 
+Contents:
+- lab1b-client.c: C source file for client program
+- lab1b-server.c: C source file for server program
+- Makefile: Makefile for the project with default make all target, individual targets for client/server, and clean/dist
+- README: this
+
+Long story short, compression with zlib is a nightmare. I got it to work in the end, but I had to specify giant buffer spaces because the library didn't want to cleanly end the stream of compressed data to or from the server or client when the size of the data surpassed the buffer size. Nevertheless, my programs pass the sanity check and work robustly otherwise.
+

@@ -323,9 +323,9 @@ int main(int argc, char** argv) {
             // decompression from server
             if (compress) {
                 if (useLog) {
-                    fprintf(stderr, "RECEIVED %d bytes: ", charsRead);
+                    fprintf(logFile, "RECEIVED %d bytes: ", charsRead);
                     for (int i = 0; i < charsRead; i++) {
-                        fprintf(stderr, "%c", srvBuf[i]);
+                        fprintf(logFile, "%c", srvBuf[i]);
                     }
                 }
                 istrm.zalloc = Z_NULL;
