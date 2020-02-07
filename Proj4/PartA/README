@@ -1,0 +1,15 @@
+NAME: Matthew Pombo
+EMAIL: mppombo5@gmail.com
+UID: 405140036
+
+S/N: BBGW18040026
+MAC: 2CF7F1068F19
+
+Included files:
+- my_beaglebone.jpg: a selfie of my holding my BeagleBone
+- connected.png: a screenshot of the wlan0 and usb0 info from 'ifconfig', also the command line prompt showing the hostname
+- copy.png: screenshot from Cyberduck where I copied my hello world program to my BeagleBone
+- build-run.png: a screenshot of my WiFi ssh session where I compiled the hello world program
+- git.png: a screenshot of cloning my CPPMatrix repository from GitHub onto my BeagleBone
+- Makefile: the makefile containing a default target for building the tarball, and a clean target to remove said tarball
+- README: this

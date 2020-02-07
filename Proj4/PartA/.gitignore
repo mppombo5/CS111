@@ -1,4 +1,4 @@
 # Mostly images, both .png and .img
 BeagleBone_Debian-8.7_IoT.img
-connected.png
-copy.png
+*.png
+*.jpg
