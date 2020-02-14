@@ -4,8 +4,8 @@
 
 UID = 405140036
 tarname = lab2a-$(UID).tar.gz
-opts = -Wall -Wextra
-tarfiles = lab2_add.c lab2_list.c SortedList.h SortedList.c
+opts = -Wall -Wextra -pthread
+tarfiles = Makefile lab2_add.c lab2_list.c SortedList.h SortedList.c
 madefiles = lab2_add lab2_list $(tarname)
 
 build: lab2_add lab2_list

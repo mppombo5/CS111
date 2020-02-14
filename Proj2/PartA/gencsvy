@@ -1,0 +1,17 @@
+#!/usr/local/bin/bash
+
+i=0
+if [[ $# -ne 3 ]]; then
+    echo 'Only 3 variables!'
+    echo 'how many times, threads, iterations'
+    exit 1
+else
+    max=$1
+    threads=$2
+    iters=$3
+fi
+
+while [[ $i -lt $max ]]; do
+    ./lab2_add -t $threads -i $iters -y
+    i=$(( $i + 1 ))
+done

@@ -1,0 +1,27 @@
+NAME: Matthew Pombo
+EMAIL: mppombo5@gmail.com
+ID: 405140036
+
+Q 2.1.1
+It takes many iterations to see errors because each thread performs more operations on the pointer with increasing iterations; with more iterations, there are more opportunities for data races. Conversely, with relatively few iterations there are significantly less opportunities for race conditions.
+
+I wrote this script to aid in generating multiple lines of csv output:
+
+#!/bin/bash
+i=0
+if [[ $# -ne 3 ]]; then
+    echo 'Only 3 variables!'
+    echo 'how many lines, threads, iterations'
+    exit 1
+else
+    max=$1
+    threads=$2
+    iters=$3
+fi
+
+while [[ $i -lt $max ]]; do
+    ./lab2_add -t $threads -i $iters
+    i=$(( $i + 1 ))
+done
+
+This way, I could just run something like './gencsv 100 2 1000' to generate 100 lines of output running 1000 iterations on 2 threads.
