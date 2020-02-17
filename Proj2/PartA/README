@@ -11,6 +11,9 @@ The --yield runs are slower because each thread is being interrupted halfway thr
 Q 2.1.3
 When the number of iterations is small, the majority of the total running time is spent setting up and spawning the pthreads, and the actual time to add and subtract from the counter is very short. As we add more and more iterations, the setup time becomes negligible, and the majority of the time is spent performing the (fast) additions and subtractions, so the average time per operation is greatly decreased.
 
+Q 2.1.4
+When the number of threads is small, there is not much locking or context switching to be done; hence, all implementations behave roughly the same. When the number of threads is high with synchronization, however, there are many checks that have to be done with the locking and unlocking to prevent race conditions.
+
 I wrote this script to aid in generating multiple lines of csv output:
 
 #!/bin/bash

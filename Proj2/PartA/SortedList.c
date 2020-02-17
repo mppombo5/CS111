@@ -42,3 +42,17 @@ SortedListElement_t *SortedList_lookup(SortedList_t *list, const char *key) {
     }
     return NULL;
 }
+
+int SortedList_length(SortedList_t *list) {
+    SortedListElement_t* cur = list;
+    if (cur->prev->next != cur || cur->next->prev != cur) {
+        return -1;
+    }
+    int size = 0;
+    cur = cur->next;
+    while (cur != list) {
+        size++;
+        cur = cur->next;
+    }
+    return size;
+}

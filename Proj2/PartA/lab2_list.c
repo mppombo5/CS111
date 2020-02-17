@@ -49,6 +49,14 @@ int main() {
         printf("%s\n", cur->key);
     } while (cur->next != list);
     printf("\n");
+    // now backwards
+    cur = list;
+    do {
+        cur = cur->prev;
+        printf("%s\n", cur->key);
+    } while (cur->prev != list);
+    printf("\n");
+    printf("size %d\n\n", SortedList_length(list));
 
     SortedList_delete(&elmt4);
     SortedList_delete(&elmt7);
@@ -58,11 +66,30 @@ int main() {
         cur = cur->next;
         printf("%s\n", cur->key);
     } while (cur->next != list);
+    printf("\n");
+    cur = list;
+    do {
+        cur = cur->prev;
+        printf("%s\n", cur->key);
+    } while (cur->prev != list);
+    printf("\n");
+    printf("size %d\n\n", SortedList_length(list));
 
     SortedListElement_t* look1 = SortedList_lookup(list, "d");
     printf("%s\n", look1->prev->key);
     printf("%s\n", look1->key);
     printf("%s\n", look1->next->key);
+
+    SortedListElement_t* look2 = SortedList_lookup(list, "hello");
+    printf("%s\n", look2->prev->key);
+    printf("%s\n", look2->key);
+    printf("%s\n", look2->next->key);
+
+    SortedList_t list2_t;
+    SortedList_t* list2 = &list2_t;
+    list2->next = list2;
+    list2->prev = list2;
+    printf("\nsize list2 %d\n", SortedList_length(list2));
 
     return 0;
 }

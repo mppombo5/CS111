@@ -5,7 +5,7 @@
 UID = 405140036
 tarname = lab2a-$(UID).tar.gz
 opts = -Wall -Wextra -pthread
-tarfiles = Makefile lab2_add.c lab2_list.c SortedList.h SortedList.c lab2_add.gp lab2_list.gp
+tarfiles = Makefile lab2_add.c lab2_list.c SortedList.h SortedList.c lab2_add.gp lab2_list.gp lab2_add.csv
 madefiles = lab2_add lab2_list $(tarname)
 
 build: lab2_add lab2_list
@@ -15,6 +15,10 @@ lab2_add: lab2_add.c
 
 lab2_list: lab2_list.c SortedList.c SortedList.h
 	gcc lab2_list.c SortedList.c -o lab2_list $(opts)
+
+.PHONY: graphs
+graphs:
+	./lab2_add.gp
 
 .PHONY: dist
 dist:
