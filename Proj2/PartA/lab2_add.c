@@ -96,6 +96,7 @@ int main(int argc, char** argv) {
                 break;
             default:
                 // no valid arguments were found
+                fprintf(stderr, "%s\n", usage);
                 exit(1);
         }
         ch = getopt_long(argc, argv, optstring, options, &optIndex);
@@ -122,14 +123,14 @@ int main(int argc, char** argv) {
     long startTime = timeRunning.tv_nsec;
 
     pthread_t threads[numThreads];
+    int threadRC;
 
     // make threads joinable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    int threadRC;
-    char* testName;
 
+    char* testName;
     // initialize locks, if any
     // also easier to initialize test name here
     if (syncType != LAB2_ADD_NOSYNC) {
@@ -156,7 +157,7 @@ int main(int argc, char** argv) {
     as.iters = iterations;
 
     for (long i = 0; i < numThreads; i++) {
-        threadRC = pthread_create(threads + i, &attr, (void* (*)(void*))threadAdd, (void*) &as);
+        threadRC = pthread_create(threads + i, &attr, threadAdd, (void*) &as);
         if (threadRC != 0) {
             errno = threadRC;
             killProg("Error creating thread", 1);
@@ -284,6 +285,6 @@ void* threadAdd(void* as_v) {
 }
 
 void killProg(const char* msg, int exitStat) {
-    fprintf(stderr, "%s: %s: %s", progName, msg, strerror(errno));
+    fprintf(stderr, "%s: %s: %s\n", progName, msg, strerror(errno));
     exit(exitStat);
 }

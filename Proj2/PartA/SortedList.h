@@ -68,7 +68,7 @@ SortedListElement_t *SortedList_lookup(SortedList_t *list, const char *key);
 
 /**
  * SortedList_length ... count elements in a sorted list
- *	While enumeratign list, it checks all prev/next pointers
+ *	While enumerating list, it checks all prev/next pointers
  *
  * @param SortedList_t *list ... header for the list
  *
