@@ -1,17 +1,24 @@
 #!/usr/local/bin/bash
 
 i=0
-if [[ $# -ne 3 ]]; then
-    echo 'Only 3 variables!'
-    echo 'how many times, threads, iterations'
+if [[ $# -lt 3 ]] || [[ $# -gt 4 ]]; then
+    echo 'Only 3 or 4 variables!'
+    echo 'how many times, threads, iterations[, lock]'
     exit 1
 else
     max=$1
     threads=$2
     iters=$3
+    if [[ $# -eq 4 ]]; then
+        lock=$4
+    fi
 fi
 
 while [[ $i -lt $max ]]; do
-    ./lab2_add -t $threads -i $iters
+    if [[ $# -eq 3 ]]; then
+        ./lab2_add -t $threads -i $iters
+    else
+        ./lab2_add -t $threads -i $iters -s $lock
+    fi
     i=$(( $i + 1 ))
 done

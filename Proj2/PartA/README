@@ -5,6 +5,12 @@ ID: 405140036
 Q 2.1.1
 It takes many iterations to see errors because each thread performs more operations on the pointer with increasing iterations; with more iterations, there are more opportunities for data races. Conversely, with relatively few iterations there are significantly less opportunities for race conditions.
 
+Q 2.1.2
+The --yield runs are slower because each thread is being interrupted halfway through its addition procedure, and this doubles the number of context switches in the processor. We would not be able to get as accurate a per-operation timing with the --yield option, because the time to perform context switches builds up quickly and is not representative of how long it takes to perform the actual addition.
+
+Q 2.1.3
+When the number of iterations is small, the majority of the total running time is spent setting up and spawning the pthreads, and the actual time to add and subtract from the counter is very short. As we add more and more iterations, the setup time becomes negligible, and the majority of the time is spent performing the (fast) additions and subtractions, so the average time per operation is greatly decreased.
+
 I wrote this script to aid in generating multiple lines of csv output:
 
 #!/bin/bash
@@ -25,3 +31,4 @@ while [[ $i -lt $max ]]; do
 done
 
 This way, I could just run something like './gencsv 100 2 1000' to generate 100 lines of output running 1000 iterations on 2 threads.
+I wrote a similar script for the --yield option, called `gencsvy`.

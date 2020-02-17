@@ -48,10 +48,10 @@ void SortedList_insert(SortedList_t *list, SortedListElement_t *element);
  *
  * @param SortedListElement_t *element ... element to be removed
  *
- * @return 0: element deleted successfully, 1: corrtuped prev/next pointers
+ * @return 0: element deleted successfully, 1: corrupted prev/next pointers
  *
  */
-int SortedList_delete( SortedListElement_t *element);
+int SortedList_delete(SortedListElement_t *element);
 
 /**
  * SortedList_lookup ... search sorted list for a key

@@ -14,8 +14,8 @@
 
 #define LAB2_ADD_NOSYNC 'F'
 #define LAB2_ADD_MUTEX 'm'
-#define LAB2_ADD_SPIN_LOCK 's'
-#define LAB2_ADD_TESTSET 'c'
+#define LAB2_ADD_SPINLOCK 's'
+#define LAB2_ADD_CAS 'c'
 
 #ifndef bool
 # define bool int
@@ -37,9 +37,16 @@ typedef struct argStruct_t {
 } argStruct;
 
 int opt_yield = 0;
-char syncType = LAB2_ADD_NOSYNC;
 void add(long long* pointer, long long value);
+void cas_add(long long* pointer, long long value);
 void* threadAdd(void* as_v);
+
+/* different locks */
+// pthread mutex
+pthread_mutex_t addMutex;
+char syncType = LAB2_ADD_NOSYNC;
+// test-and-set spinlock
+volatile short spinLock;
 
 int main(int argc, char** argv) {
     long numThreads = 1;
@@ -98,10 +105,10 @@ int main(int argc, char** argv) {
             case LAB2_ADD_MUTEX:
                 fprintf(stderr, "'--sync=m' detected\n");
                 break;
-            case LAB2_ADD_TESTSET:
+            case LAB2_ADD_CAS:
                 fprintf(stderr, "'--sync=c' detected\n");
                 break;
-            case LAB2_ADD_SPIN_LOCK:
+            case LAB2_ADD_SPINLOCK:
                 fprintf(stderr, "'--sync=s' detected\n");
                 break;
         }
@@ -115,16 +122,40 @@ int main(int argc, char** argv) {
     long startTime = timeRunning.tv_nsec;
 
     pthread_t threads[numThreads];
+
     // make threads joinable
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
     int threadRC;
+    char* testName;
+
+    // initialize locks, if any
+    // also easier to initialize test name here
+    if (syncType != LAB2_ADD_NOSYNC) {
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_init(&addMutex, NULL);
+                testName = opt_yield ? "add-yield-m" : "add-m";
+                break;
+            case LAB2_ADD_SPINLOCK:
+                testName = opt_yield ? "add-yield-s" : "add-s";
+                break;
+            case LAB2_ADD_CAS:
+                testName = opt_yield ? "add-yield-c" : "add-c";
+                break;
+        }
+    }
+    else {
+        testName = opt_yield ? "add-yield-none" : "add-none";
+    }
+
+    // really only need one struct, not modifying any members
+    argStruct as;
+    as.pointer = &counter;
+    as.iters = iterations;
 
     for (long i = 0; i < numThreads; i++) {
-        argStruct as;
-        as.pointer = &counter;
-        as.iters = iterations;
         threadRC = pthread_create(threads + i, &attr, (void* (*)(void*))threadAdd, (void*) &as);
         if (threadRC != 0) {
             errno = threadRC;
@@ -142,45 +173,23 @@ int main(int argc, char** argv) {
         }
     }
 
+    // destroy locks
+    if (syncType != LAB2_ADD_NOSYNC) {
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_destroy(&addMutex);
+                break;
+        }
+    }
+
+    // get end time, and thus total running time
     if (clock_gettime(CLOCK_MONOTONIC, &timeRunning) == -1) {
         killProg("Error in clock_gettime() after iterations", 1);
     }
     long endTime = timeRunning.tv_nsec;
     long totalTime = endTime - startTime;
 
-    char* testName;
-    if (opt_yield) {
-        switch (syncType) {
-            case LAB2_ADD_NOSYNC:
-                testName = "add-yield-none";
-                break;
-            case LAB2_ADD_MUTEX:
-                testName = "add-yield-m";
-                break;
-            case LAB2_ADD_SPIN_LOCK:
-                testName = "add-yield-s";
-                break;
-            case LAB2_ADD_TESTSET:
-                testName = "add-yield-c";
-                break;
-        }
-    }
-    else {
-        switch (syncType) {
-            case LAB2_ADD_NOSYNC:
-                testName = "add-none";
-                break;
-            case LAB2_ADD_MUTEX:
-                testName = "add-m";
-                break;
-            case LAB2_ADD_SPIN_LOCK:
-                testName = "add-s";
-                break;
-            case LAB2_ADD_TESTSET:
-                testName = "add-c";
-                break;
-        }
-    }
+    // operations and average time per op
     long ops = 2 * numThreads * iterations;
     long timePerOp = totalTime / ops;
 
@@ -197,15 +206,79 @@ void add(long long* pointer, long long value) {
     *pointer = sum;
 }
 
+void cas_add(long long* pointer, long long value) {
+    long long old;
+    long long sum;
+    do {
+        old = *pointer;
+        sum = old + value;
+        if (opt_yield) {
+            sched_yield();
+        }
+    } while (__sync_val_compare_and_swap(pointer, old, sum) != old);
+}
+
 void* threadAdd(void* as_v) {
     argStruct* as = (argStruct*) as_v;
     long iters = as->iters;
     long long* pointer = as->pointer;
-    for (long i = 0; i < iters; i++) {
-        add(pointer, 1);
-    }
-    for (long i = 0; i < iters; i++) {
-        add(pointer, -1);
+
+    for (int i = 0; i < iters; i++) {
+        // lock
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_lock(&addMutex);
+                break;
+            case LAB2_ADD_SPINLOCK:
+                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                break;
+        }
+
+        // add 1
+        if (syncType == LAB2_ADD_CAS) {
+            cas_add(pointer, 1);
+        }
+        else {
+            add(pointer, 1);
+        }
+
+        //unlock
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_unlock(&addMutex);
+                break;
+            case LAB2_ADD_SPINLOCK:
+                __sync_lock_release(&spinLock);
+                break;
+        }
+
+        // lock again
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_lock(&addMutex);
+                break;
+            case LAB2_ADD_SPINLOCK:
+                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                break;
+        }
+
+        // subtract
+        if (syncType == LAB2_ADD_CAS) {
+            cas_add(pointer, -1);
+        }
+        else {
+            add(pointer, -1);
+        }
+
+        // unlock again
+        switch (syncType) {
+            case LAB2_ADD_MUTEX:
+                pthread_mutex_unlock(&addMutex);
+                break;
+            case LAB2_ADD_SPINLOCK:
+                __sync_lock_release(&spinLock);
+                break;
+        }
     }
     pthread_exit(NULL);
 }
