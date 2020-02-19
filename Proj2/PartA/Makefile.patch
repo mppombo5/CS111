@@ -1,0 +1,11 @@
+--- a/Makefile	2020-02-17 23:41:01.000000000 -0800
++++ b/Makefile	2020-02-17 14:50:16.000000000 -0800
+@@ -34,7 +34,7 @@
+ 	./lab2_list.gp
+ 
+ .PHONY: dist
+-dist:
++dist: build tests graphs
+ 	rm -rf $(tarname)
+ 	tar -cvzf $(tarname) $(tarfiles)
+ 

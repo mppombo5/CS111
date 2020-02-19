@@ -14,24 +14,10 @@ When the number of iterations is small, the majority of the total running time i
 Q 2.1.4
 When the number of threads is small, there is not much locking or context switching to be done; hence, all implementations behave roughly the same. When the number of threads is high with synchronization, however, there are many checks that have to be done with the locking and unlocking to prevent race conditions.
 
-I wrote this script to aid in generating multiple lines of csv output:
+Q 2.2.1
+The time for pthread mutex operations seem to grow quickly at first, but then are very slow to increase; the growth looks almost logarithmic. This could be because as you add more and more threads, the cost of checking the locks becomes negligible as more operations are performed, lowering the overall average time per operation.
 
-#!/bin/bash
-i=0
-if [[ $# -ne 3 ]]; then
-    echo 'Only 3 variables!'
-    echo 'how many lines, threads, iterations'
-    exit 1
-else
-    max=$1
-    threads=$2
-    iters=$3
-fi
+Q 2.2.2
+The mutex implementation seems to grow slower than the spin-lock implementation; this could be because the mutex is made specifically for threads, while the spin-lock implementation is simply using a builtin function with a regular variable to hack together thread-safe operations.
 
-while [[ $i -lt $max ]]; do
-    ./lab2_add -t $threads -i $iters
-    i=$(( $i + 1 ))
-done
-
-This way, I could just run something like './gencsv 100 2 1000' to generate 100 lines of output running 1000 iterations on 2 threads.
-I wrote a similar script for the --yield option, called `gencsvy`.
+The scripts 'gencsv', 'gencsvy', 'listcsv', 'addplots.sh', and 'listplots.sh' were made to aid in the creation of .csv files and .png graphs.

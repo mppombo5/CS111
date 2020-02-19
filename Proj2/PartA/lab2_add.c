@@ -175,12 +175,8 @@ int main(int argc, char** argv) {
     }
 
     // destroy locks
-    if (syncType != LAB2_ADD_NOSYNC) {
-        switch (syncType) {
-            case LAB2_ADD_MUTEX:
-                pthread_mutex_destroy(&addMutex);
-                break;
-        }
+    if (syncType == LAB2_ADD_MUTEX) {
+        pthread_mutex_destroy(&addMutex);
     }
 
     // get end time, and thus total running time
@@ -233,6 +229,7 @@ void* threadAdd(void* as_v) {
             case LAB2_ADD_SPINLOCK:
                 while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
                 break;
+            default: break;
         }
 
         // add 1
@@ -251,6 +248,7 @@ void* threadAdd(void* as_v) {
             case LAB2_ADD_SPINLOCK:
                 __sync_lock_release(&spinLock);
                 break;
+            default: break;
         }
 
         // lock again
@@ -261,6 +259,7 @@ void* threadAdd(void* as_v) {
             case LAB2_ADD_SPINLOCK:
                 while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
                 break;
+            default: break;
         }
 
         // subtract
@@ -279,6 +278,7 @@ void* threadAdd(void* as_v) {
             case LAB2_ADD_SPINLOCK:
                 __sync_lock_release(&spinLock);
                 break;
+            default: break;
         }
     }
     pthread_exit(NULL);

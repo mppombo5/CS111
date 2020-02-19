@@ -27,22 +27,15 @@
 # define __unused __attribute__((unused))
 #endif
 
-#ifndef bool
-# define bool int
-#endif
-#ifndef true
-# define true 1
-#endif
-#ifndef false
-# define false 0
-#endif
-
 const char* progName = "lab2_list";
 const char* usage = "lab2_list [--iterations=#] [--threads=#] [--yield=[idl]";
+int debug = 0;
 
 int opt_yield = 0;
 
 char syncType = LAB2_LIST_NOSYNC;
+pthread_mutex_t listMutex;
+volatile short spinLock;
 
 void killProg(const char* msg, int exitStat);
 void segfaultHandler(int sig);
@@ -55,6 +48,7 @@ typedef struct argStruct_t {
     SortedList_t* list;
     SortedListElement_t* elmtArr;
     long iters;
+    long threadID;
 } argStruct;
 
 int main(int argc, char** argv) {
@@ -70,11 +64,12 @@ int main(int argc, char** argv) {
             {"iterations", required_argument, NULL, 'i'},
             {"yield", required_argument, NULL, 'y'},
             {"sync", required_argument, NULL, 's'},
+            {"debug", no_argument, NULL, 'd'},
             {0,0,0,0}
     };
 
     int optIndex;
-    const char* optstring = "t:i:y:";
+    const char* optstring = "t:i:y:s:d";
     int ch = getopt_long(argc, argv, optstring, options, &optIndex);
     while (ch != -1) {
         switch (ch) {
@@ -123,6 +118,9 @@ int main(int argc, char** argv) {
                         break;
                 }
                 break;
+            case 'd':
+                debug = 1;
+                break;
             default:
                 // invalid argument
                 fprintf(stderr, "%s\n", usage);
@@ -160,17 +158,29 @@ int main(int argc, char** argv) {
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
+    // initialize mutex locks
+    if (syncType == LAB2_LIST_MUTEX) {
+        pthread_mutex_init(&listMutex, NULL);
+    }
+
+    // array of argStructs for each thread
+    argStruct structs[numThreads];
+
     // start threads
     for (long i = 0; i < numThreads; i++) {
-        argStruct as;
-        as.list = list;
-        as.iters = iters;
-        as.elmtArr = randElmts + (i * iters);
+        argStruct* as = structs + i;
+        as->list = list;
+        as->iters = iters;
+        as->elmtArr = randElmts + (i * iters);
+        as->threadID = i;
 
-        threadRC = pthread_create(threads + i, &attr, &threadFunc, (void*) &as);
+        threadRC = pthread_create(threads + i, &attr, &threadFunc, (void*) as);
         if (threadRC != 0) {
             errno = threadRC;
             killProg("Error creating thread", 1);
+        }
+        if (debug) {
+            fprintf(stderr, "thread %ld created\n", i);
         }
     }
 
@@ -182,6 +192,14 @@ int main(int argc, char** argv) {
             errno = threadRC;
             killProg("Error joining threads", 1);
         }
+        if (debug) {
+            fprintf(stderr, "thread %ld joined\n", i);
+        }
+    }
+
+    // destroy locks
+    if (syncType == LAB2_LIST_MUTEX) {
+        pthread_mutex_destroy(&listMutex);
     }
 
     // get end time, and hence total running time
@@ -225,9 +243,149 @@ int main(int argc, char** argv) {
 
     // print csv line
     // name,threads,iters,lists(1),ops,runtime,avg
-    printf("list-%s-%s,%ld,%ld,%d,%ld,%ld,%ld", yieldopts, syncopts, numThreads, iters, numLists, ops, totalTime, timePerOp);
+    printf("list-%s-%s,%ld,%ld,%d,%ld,%ld,%ld\n", yieldopts, syncopts, numThreads, iters, numLists, ops, totalTime, timePerOp);
 
-    return 0;
+    pthread_exit(NULL);
+}
+
+void* threadFunc(void* as_v) {
+    argStruct* as = (argStruct*) as_v;
+    SortedList_t* list = as->list;
+    long iters = as->iters;
+    SortedListElement_t* elmtArr = as->elmtArr;
+    long id = as->threadID;
+
+    if (debug) {
+        fprintf(stderr, "thread %ld starting insertions\n", id);
+    }
+    for (long i = 0; i < iters; i++) {
+        if (debug) {
+            fprintf(stderr, "thread %ld inserting item %ld\n", id, i);
+        }
+
+        // lock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_lock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                break;
+            default: break;
+        }
+
+        SortedList_insert(list, elmtArr + i);
+
+        // unlock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_unlock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                __sync_lock_release(&spinLock);
+                break;
+            default: break;
+        }
+
+        if (debug) {
+            fprintf(stderr, "thread %ld inserted item %ld\n", id, i);
+        }
+    }
+    if (debug){
+        fprintf(stderr, "thread %ld finished insertions\n", id);
+    }
+
+    // lock
+    switch (syncType) {
+        case LAB2_LIST_MUTEX:
+            pthread_mutex_lock(&listMutex);
+            break;
+        case LAB2_LIST_SPINLOCK:
+            while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+            break;
+        default: break;
+    }
+
+    int listSize = SortedList_length(list);
+    if (listSize == -1) {
+        killProg("Corrupted list found in call to SortedList_length()", 2);
+    }
+
+    // unlock
+    switch (syncType) {
+        case LAB2_LIST_MUTEX:
+            pthread_mutex_unlock(&listMutex);
+            break;
+        case LAB2_LIST_SPINLOCK:
+            __sync_lock_release(&spinLock);
+            break;
+        default: break;
+    }
+
+    for (long i = 0; i < iters; i++) {
+        if (debug) {
+            fprintf(stderr, "thread %ld starting lookup for %ldth item inserted\n", id, i);
+        }
+
+        // lock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_lock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                break;
+            default: break;
+        }
+
+        SortedListElement_t* elmt = SortedList_lookup(list, elmtArr[i].key);
+        if (elmt == NULL) {
+            killProg("Corrupted list; known element not found in call to SortedList_lookup()", 2);
+        }
+
+        // unlock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_unlock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                __sync_lock_release(&spinLock);
+                break;
+            default: break;
+        }
+
+        if (debug) {
+            fprintf(stderr, "thread %ld found %ldth item\n", id, i);
+        }
+
+        // lock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_lock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                break;
+            default: break;
+        }
+
+        int del = SortedList_delete(elmt);
+        if (del == 1) {
+            killProg("Corrupted list found in call to SortedList_delete()", 2);
+        }
+
+        // unlock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_unlock(&listMutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                __sync_lock_release(&spinLock);
+                break;
+            default: break;
+        }
+    }
+    pthread_exit(NULL);
 }
 
 // shamelessly ripped from Stack Overflow, since I figure the point of this lab
@@ -246,35 +404,6 @@ char* randString() {
     }
     str[LAB2_LIST_RANDSTRLEN] = '\0';
     return str;
-}
-
-void* threadFunc(void* as_v) {
-    argStruct* as = (argStruct*) as_v;
-    SortedList_t* list = as->list;
-    long iters = as->iters;
-    SortedListElement_t* elmtArr = as->elmtArr;
-
-    for (long i = 0; i < iters; i++) {
-        SortedList_insert(list, elmtArr + i);
-    }
-
-    int listSize = SortedList_length(list);
-    if (listSize == -1) {
-        killProg("Corrupted list found in call to SortedList_length()", 2);
-    }
-
-    for (long i = 0; i < iters; i++) {
-        SortedListElement_t* elmt = SortedList_lookup(list, elmtArr[i].key);
-        if (elmt == NULL) {
-            killProg("Corrupted list; known element not found in call to SortedList_lookup()", 2);
-        }
-
-        int del = SortedList_delete(elmt);
-        if (del == 1) {
-            killProg("Corrupted list found in call to SortedList_delete()", 2);
-        }
-    }
-    pthread_exit(NULL);
 }
 
 void killProg(const char* msg, int exitStat) {

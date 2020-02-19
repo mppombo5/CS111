@@ -1,0 +1,41 @@
+#!/usr/local/bin/bash
+
+if [[ $# -ne 3 ]] && [[ $# -ne 5 ]]; then
+    echo 'Only 3 or 4 variables!'
+    echo 'how many times, threads, iterations[, yield, lock]'
+    exit 1
+else
+    max=$1
+    threads=$2
+    iters=$3
+    if [[ $# -eq 5 ]]; then
+        if [[ $4 == "0" ]]; then
+            noSync="true"
+        else
+            noSync="false"
+            sync=$4
+        fi
+        if [[ $5 == "0" ]]; then
+            noYield="true"
+        else
+            noYield="false"
+            yield=$5
+        fi
+    fi
+fi
+
+i=0
+while [[ $i -lt $max ]]; do
+    if [[ $# -eq 3 ]]; then
+        ./lab2_list -t $threads -i $iters
+    else
+        if [[ $4 != "0" ]] && [[ $5 != "0" ]]; then
+            ./lab2_list -t $threads -i $iters -s $sync -y $yield
+        elif [[ $4 == "0" ]]; then
+            ./lab2_list -t $threads -i $iters -y $yield
+        else
+            ./lab2_list -t $threads -i $iters -s $sync
+        fi
+    fi
+    i=$(( $i + 1 ))
+done
