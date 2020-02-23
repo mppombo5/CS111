@@ -2,6 +2,20 @@ NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
 
+Included files:
+- SortedList.h/SortedList.c: the source code for the linked list.
+- lab2_list.c: the C source code for my list driver program.
+- Makefile: the makefile to build all the needed targets.
+- lab2b_list.csv: the comma-separated value file needed to make all the plots.
+- profile.out: the output of running pprof on the driver program.
+- lab2b_#.png: the plots produced by my gnuplot script.
+- makecsv.sh: a bash script to populate lab2b_list.csv with the needed data.
+- listcsv: another bash script to easily generate a given number of csv lines with given parameters.
+
+A few notes:
+- The tests we were told to run had several duplicates within them, so I only ran one of them for each given test in order to get a nice, clean line for each of the generated plots.
+- Within lab2_list.c, I used StackOverflow for two bits of code: one for the string hashing function, and the other for generating random strings. All other code is my original work.
+
 Q 2.3.1 - Cycles in the basic list implementation
 I believe most of the cycles in 1 and 2-thread tests are being spent actually operating on the list, since the throughput is very high and therefore the threads are being used efficiently.
 I believe most of the cycles in the high-thread spinlock tests are being spent spinning to wait for a chance to operate on the list, since the throughput is much, much lower.
@@ -14,3 +28,8 @@ Q 2.3.3 - Mutex Wait Time
 The lock-wait time skyrockets because with more threads, they have to wait for all the other threads to perform an operation before they themselves can acquire a lock.
 The average time per operation rises because there are more threads that have to perform the operations; so there are more overall calculations, as well as the time to wait for the lock.
 The time per operation increases more dramatically than the time per lock-wait because the time for a single thread to complete its list operations does not depend on the number of threads (besides the time to wait for a lock), so the average grows more slowly.
+
+Q 2.3.4 - Performance of Partitioned Lists
+The throughput increases exponentially as the number of lists increases, judging by the linear growth of the logarithmic scale.
+It should theoretically keep increasing as the number of lists is further increased, however since the machine can only perform so many operations in a given time, the throughput will asymptotically reach a limit due to hardware limitations. There is also the added overhead of creating all the lists and maintaining all the locks, which will eventually cause problems if they get too big.
+The pattern does appear to be true in several cases for the plots - if you pick a point and look horizontally to the right, you will see another point on the same horizontal line with more threads and fewer lists.
