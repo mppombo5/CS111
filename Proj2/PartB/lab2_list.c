@@ -25,6 +25,7 @@
 #ifndef BILLION
 # define BILLION 1000000000LL
 #endif
+
 #ifndef __unused
 # define __unused __attribute__((unused))
 #endif
