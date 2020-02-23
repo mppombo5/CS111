@@ -1,3 +1,16 @@
 NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
+
+Q 2.3.1 - Cycles in the basic list implementation
+I believe most of the cycles in 1 and 2-thread tests are being spent actually operating on the list, since the throughput is very high and therefore the threads are being used efficiently.
+I believe most of the cycles in the high-thread spinlock tests are being spent spinning to wait for a chance to operate on the list, since the throughput is much, much lower.
+I believe most of the cycles in the high-thread mutex tests are being spent sleeping, waiting to be woken up by the OS - also because the throughput is much lower.
+
+Q 2.3.2 - Execution Profiling
+The output of pprof points to the two lines in my code with __sync_lock_test_and_set. Together, these two lines take up nearly 87% of the runtime for the execution of the program. This operation becomes extremely expensive, because with such a large bottleneck you have 12 threads near constantly spinning (without sleeping) while they wait for the spinlock to become available.
+
+Q 2.3.3 - Mutex Wait Time
+The lock-wait time skyrockets because with more threads, they have to wait for all the other threads to perform an operation before they themselves can acquire a lock.
+The average time per operation rises because there are more threads that have to perform the operations; so there are more overall calculations, as well as the time to wait for the lock.
+The time per operation increases more dramatically than the time per lock-wait because the time for a single thread to complete its list operations does not depend on the number of threads (besides the time to wait for a lock), so the average grows more slowly.

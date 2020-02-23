@@ -11,7 +11,6 @@
 #include <getopt.h>
 #include <signal.h>
 #include <time.h>
-#include <gperftools/profiler.h>
 #include "SortedList.h"
 
 // random string length
@@ -32,15 +31,12 @@
 
 // constant strings for reference
 const char* const progName = "lab2_list";
-const char* const usage = "lab2_list [--iterations=#] [--threads=#] [--yield=[idl]";
+const char* const usage = "lab2_list [--iterations=#] [--threads=#] [--lists=#] [--yield=[idl]";
 const char* const randCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-?!";
-int randLen = strlen(randCharset);
 
 // global variables
 char syncType = LAB2_LIST_NOSYNC;
 int opt_yield = 0;
-pthread_mutex_t listMutex;
-volatile short spinLock;
 int debug = 0;
 
 // various utility functions
@@ -48,18 +44,24 @@ void killProg(const char* msg, int exitStat);
 void segfaultHandler(int sig __unused);
 char* randString();
 void* threadFunc(void* as_v);
+unsigned long strHash(const char* str);
+long long timeElapsed(struct timespec* start, struct timespec* end);
 
 // members: shared list, element array, number of iterations
 typedef struct argStruct_t {
-    SortedList_t* list;
+    long numIters;
+    SortedList_t* listArr;
+    long numLists;
     SortedListElement_t* elmtArr;
-    long iters;
+    pthread_mutex_t* mutexArr;
+    volatile short* spinlockArr;
     long threadID;
 } argStruct;
 
 int main(int argc, char** argv) {
-    long threads = 1;
-    long iters = 1;
+    long numThreads = 1;
+    long numIters = 1;
+    long numLists = 1;
 
     if (signal(SIGSEGV, &segfaultHandler) == SIG_ERR) {
         killProg("Unable to register handler for SIGSEGV", 1);
@@ -70,24 +72,25 @@ int main(int argc, char** argv) {
             {"iterations", required_argument, NULL, 'i'},
             {"yield", required_argument, NULL, 'y'},
             {"sync", required_argument, NULL, 's'},
+            {"lists", required_argument, NULL, 'l'},
             {"debug", no_argument, NULL, 'd'},
             {0,0,0,0}
     };
 
     int optIndex;
-    const char* optstring = "t:i:y:s:d";
+    const char* optstring = "t:i:y:s:l:d";
     int ch = getopt_long(argc, argv, optstring, options, &optIndex);
     while (ch != -1) {
         switch (ch) {
             case 't':
-                threads = atol(optarg);
-                if (threads < 0) {
+                numThreads = atol(optarg);
+                if (numThreads < 0) {
                     killProg("'--threads' argument must be non-negative", 1);
                 }
                 break;
             case 'i':
-                iters = atol(optarg);
-                if (iters < 0) {
+                numIters = atol(optarg);
+                if (numIters < 0) {
                     killProg("'--iterations' argument must be non-negative", 1);
                 }
                 break;
@@ -124,6 +127,12 @@ int main(int argc, char** argv) {
                         break;
                 }
                 break;
+            case 'l':
+                numLists = atol(optarg);
+                if (numLists < 1) {
+                    killProg("'--lists' argument must be nonzero and positive", 1);
+                }
+                break;
             case 'd':
                 debug = 1;
                 break;
@@ -135,27 +144,23 @@ int main(int argc, char** argv) {
         ch = getopt_long(argc, argv, optstring, options, &optIndex);
     }
 
-// initialize empty list
-    SortedList_t list_t;
-    SortedList_t* list = &list_t;
-    list->next = list;
-    list->prev = list;
+    // create a bunch of empty lists
+    SortedList_t listArr[numLists];
+    for (int i = 0; i < numLists; i++) {
+        SortedList_t* cur = listArr + i;
+        cur->next = cur;
+        cur->prev = cur;
+    }
 
-    // generate random keys, stick them in an array
-    long numElmts = iters * threads;
+    // generate elements with random keys, stick them in an array
+    long numElmts = numIters * numThreads;
     SortedListElement_t randElmts[numElmts];
     for (int i = 0; i < numElmts; i++) {
         randElmts[i].key = randString();
     }
 
-    // get start time
-    struct timespec startTimespec;
-    if (clock_gettime(CLOCK_MONOTONIC, &startTimespec) == -1) {
-        killProg("Error in clock_gettime() before iterations", 1);
-    }
-
     // threads and their return codes
-    pthread_t threadArr[threads];
+    pthread_t threadArr[numThreads];
     int threadRC;
 
     // make threads joinable
@@ -163,20 +168,45 @@ int main(int argc, char** argv) {
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    // initialize mutex locks
+    // initialize mutexes for each list
+    pthread_mutex_t* mutexArr;
     if (syncType == LAB2_LIST_MUTEX) {
-        pthread_mutex_init(&listMutex, NULL);
+        mutexArr = (pthread_mutex_t*) malloc(sizeof(pthread_mutex_t) * numLists);
+        if (mutexArr == NULL) {
+            killProg("Error in malloc() while allocating mutexes", 1);
+        }
+        for (int i = 0; i < numLists; i++) {
+            pthread_mutex_init(mutexArr + i, NULL);
+        }
+    }
+
+    // initialize spinlock list
+    volatile short* spinlockArr;
+    if (syncType == LAB2_LIST_SPINLOCK) {
+        spinlockArr = (volatile short*) calloc(numLists, sizeof(volatile short));
+        if (spinlockArr == NULL) {
+            killProg("Error in calloc() while allocating spinlocks", 1);
+        }
     }
 
     // array of argStructs for each thread
-    argStruct structs[threads];
+    argStruct structs[numThreads];
+
+    // get start time
+    struct timespec startTimespec;
+    if (clock_gettime(CLOCK_MONOTONIC, &startTimespec) == -1) {
+        killProg("Error in clock_gettime() before iterations", 1);
+    }
 
     // start threads
-    for (long i = 0; i < threads; i++) {
+    for (long i = 0; i < numThreads; i++) {
         argStruct* as = structs + i;
-        as->list = list;
-        as->iters = iters;
-        as->elmtArr = randElmts + (i * iters);
+        as->numIters = numIters;
+        as->listArr = listArr;
+        as->numLists = numLists;
+        as->elmtArr = randElmts + (i * numIters);
+        as->mutexArr = mutexArr;
+        as->spinlockArr = spinlockArr;
         as->threadID = i;
 
         threadRC = pthread_create(threadArr + i, &attr, &threadFunc, (void*) as);
@@ -189,36 +219,52 @@ int main(int argc, char** argv) {
         }
     }
 
+    // variable to sum up each thread mean wait-for-lock time
+    long long avgLockTime = 0;
+
     // join them all back up
     pthread_attr_destroy(&attr);
-    for (long i = 0; i < threads; i++) {
-        threadRC = pthread_join(threadArr[i], NULL);
+    for (long i = 0; i < numThreads; i++) {
+        void* tmp;
+        threadRC = pthread_join(threadArr[i], &tmp);
         if (threadRC != 0) {
             errno = threadRC;
             killProg("Error joining threads", 1);
         }
+        avgLockTime += (long long) tmp;
         if (debug) {
             fprintf(stderr, "thread %ld joined\n", i);
         }
     }
 
-    // destroy locks
-    if (syncType == LAB2_LIST_MUTEX) {
-        pthread_mutex_destroy(&listMutex);
-    }
+    // calculate average wait-for-lock time by dividing avgLockTime by the number of threads
+    // but make it 0 if there was no synchronization
+    avgLockTime = (syncType == LAB2_LIST_NOSYNC) ? 0 : (avgLockTime / numThreads);
 
     // get end time, and hence total running time
     struct timespec endTimespec;
     if (clock_gettime(CLOCK_MONOTONIC, &endTimespec) == -1) {
         killProg("Error in clock_gettime() after iterations", 1);
     }
-    long long seconds = endTimespec.tv_sec - startTimespec.tv_sec;
-    long long rawNanoseconds = endTimespec.tv_nsec - startTimespec.tv_nsec;
-    long long nanoseconds = (rawNanoseconds < 0) ? (BILLION + rawNanoseconds) : rawNanoseconds;
-    long long totalTime = (seconds * BILLION) + nanoseconds;
+    long long totalTime = timeElapsed(&startTimespec, &endTimespec);
 
-    if (SortedList_length(list) != 0) {
-        killProg("Corrupted list; length is not 0 after thread operations", 2);
+    // destroy mutexes
+    if (syncType == LAB2_LIST_MUTEX) {
+        for (int i = 0; i < numLists; i++) {
+            pthread_mutex_destroy(mutexArr + i);
+        }
+        free((void*) mutexArr);
+    }
+
+    // free spinlock array
+    if (syncType == LAB2_LIST_SPINLOCK) {
+        free((void*) spinlockArr);
+    }
+
+    for (int i = 0; i < numLists; i++) {
+        if (SortedList_length(listArr + i) != 0) {
+            killProg("Corrupted list; length of at least one list is not 0 after thread operations", 2);
+        }
     }
 
     // build the CSV string
@@ -244,53 +290,85 @@ int main(int argc, char** argv) {
         default: break;
     }
 
-    int numLists = 1;
-
-    long ops = threads * iters * 3;
+    long ops = numThreads * numIters * 3;
     long long timePerOp = totalTime / ops;
 
     // print csv line
     // name,threads,iters,lists(1),ops,runtime,avg
-    printf("list-%s-%s,%ld,%ld,%d,%ld,%lld,%lld\n", yieldopts, syncopts, threads, iters, numLists, ops, totalTime, timePerOp);
+    printf("list-%s-%s,%ld,%ld,%ld,%ld,%lld,%lld,%lld\n", yieldopts, syncopts, numThreads, numIters, numLists, ops, totalTime, timePerOp, avgLockTime);
 
     pthread_exit(NULL);
 }
 
+/*
+ * listArr, mutexArr, and spinlockArr all have 'numLists' number of elements.
+ * Each one at position j correspond to the jth position; therefore, in this function,
+ * setting a pointer equal to mutexArr + j or spinlockArr + j correspond to the lock
+ * needed to operate on that list.
+ */
 void* threadFunc(void* as_v) {
+    // a TON of local variables to be declared, just so we're not constantly reading from memory
     argStruct* as = (argStruct*) as_v;
-    SortedList_t* list = as->list;
-    long iters = as->iters;
+    long numIters = as->numIters;
+    SortedList_t* listArr = as->listArr;
+    long numLists = as->numLists;
     SortedListElement_t* elmtArr = as->elmtArr;
+    pthread_mutex_t* mutexArr = as->mutexArr;
+    volatile short* spinlockArr = as->spinlockArr;
     long id = as->threadID;
+
+    // local mutex and spinlock pointers, as well as the current list to operate on
+    pthread_mutex_t* mutex;
+    volatile short* spinlock;
+    SortedList_t* list;
+
+    // total (average) time spend on locks (in nanoseconds)
+    long long avgLockTime = 0;
+    struct timespec startTime;
+    struct timespec endTime;
 
     if (debug) {
         fprintf(stderr, "thread %ld starting insertions\n", id);
     }
-    for (long i = 0; i < iters; i++) {
+    long long insertLockTime = 0;
+    for (long i = 0; i < numIters; i++) {
         if (debug) {
             fprintf(stderr, "thread %ld inserting item %ld\n", id, i);
         }
 
-        // lock
+        // hash the key and get the corresponding list to operate on
+        unsigned long listPos = strHash(elmtArr[i].key) % numLists;
+        list = listArr + listPos;
+
+        // assign locks and lock
+        if (clock_gettime(CLOCK_MONOTONIC, &startTime) == -1) {
+            killProg("Unable to get time before obtaining lock during insertion", 1);
+        }
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_lock(&listMutex);
+                mutex = mutexArr + listPos;
+                pthread_mutex_lock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                spinlock = spinlockArr + listPos;
+                while (__sync_lock_test_and_set(spinlock, 1));
                 break;
             default: break;
         }
+        if (clock_gettime(CLOCK_MONOTONIC, &endTime) == -1) {
+            killProg("Unable to get time after obtaining lock during insertion", 1);
+        }
+        insertLockTime += timeElapsed(&startTime, &endTime);
 
         SortedList_insert(list, elmtArr + i);
 
         // unlock
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_unlock(&listMutex);
+                pthread_mutex_unlock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                __sync_lock_release(&spinLock);
+                __sync_lock_release(spinlock);
                 break;
             default: break;
         }
@@ -302,51 +380,86 @@ void* threadFunc(void* as_v) {
     if (debug){
         fprintf(stderr, "thread %ld finished insertions\n", id);
     }
+    // average wait-for-lock for insertions
+    avgLockTime += insertLockTime / numIters;
 
-    // lock
-    switch (syncType) {
-        case LAB2_LIST_MUTEX:
-            pthread_mutex_lock(&listMutex);
-            break;
-        case LAB2_LIST_SPINLOCK:
-            while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
-            break;
-        default: break;
+    // enumerate the total list, locking each sub-list as you go
+    long long enumLockTime = 0;
+    for (int listPos = 0; listPos < numLists; listPos++) {
+        list = listArr + listPos;
+
+        // assign and lock
+        if (clock_gettime(CLOCK_MONOTONIC, &startTime) == -1) {
+            killProg("Unable to get time before obtaining lock during insertion", 1);
+        }
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                mutex = mutexArr + listPos;
+                pthread_mutex_lock(mutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                spinlock = spinlockArr + listPos;
+                while (__sync_lock_test_and_set(spinlock, 1));
+                break;
+            default: break;
+        }
+        if (clock_gettime(CLOCK_MONOTONIC, &endTime) == -1) {
+            killProg("Unable to get time after obtaining lock during insertion", 1);
+        }
+        enumLockTime += timeElapsed(&startTime, &endTime);
+
+        // actual enumeration
+        int listSize = SortedList_length(list);
+        if (listSize == -1) {
+            killProg("Corrupted list found in call to SortedList_length()", 2);
+        }
+
+        // unlock
+        switch (syncType) {
+            case LAB2_LIST_MUTEX:
+                pthread_mutex_unlock(mutex);
+                break;
+            case LAB2_LIST_SPINLOCK:
+                __sync_lock_release(spinlock);
+                break;
+            default: break;
+        }
     }
+    // average wait-for-lock for enumerations
+    avgLockTime += enumLockTime / numLists;
 
-    int listSize = SortedList_length(list);
-    if (listSize == -1) {
-        killProg("Corrupted list found in call to SortedList_length()", 2);
-    }
-
-    // unlock
-    switch (syncType) {
-        case LAB2_LIST_MUTEX:
-            pthread_mutex_unlock(&listMutex);
-            break;
-        case LAB2_LIST_SPINLOCK:
-            __sync_lock_release(&spinLock);
-            break;
-        default: break;
-    }
-
-    for (long i = 0; i < iters; i++) {
+    // lookup and deletion for each inserted element
+    long long lookdelLockTime = 0;
+    for (long i = 0; i < numIters; i++) {
         if (debug) {
             fprintf(stderr, "thread %ld starting lookup for %ldth item inserted\n", id, i);
         }
 
-        // lock
+        SortedListElement_t* curElmt = elmtArr + i;
+        unsigned long listPos = strHash(curElmt->key) % numLists;
+        list = listArr + listPos;
+
+        // assign/lock
+        if (clock_gettime(CLOCK_MONOTONIC, &startTime) == -1) {
+            killProg("Unable to get time before obtaining lock during insertion", 1);
+        }
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_lock(&listMutex);
+                mutex = mutexArr + listPos;
+                pthread_mutex_lock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                spinlock = spinlockArr + listPos;
+                while (__sync_lock_test_and_set(spinlock, 1));
                 break;
             default: break;
         }
+        if (clock_gettime(CLOCK_MONOTONIC, &endTime) == -1) {
+            killProg("Unable to get time after obtaining lock during insertion", 1);
+        }
+        lookdelLockTime += timeElapsed(&startTime, &endTime);
 
-        SortedListElement_t* elmt = SortedList_lookup(list, elmtArr[i].key);
+        SortedListElement_t* elmt = SortedList_lookup(list, curElmt->key);
         if (elmt == NULL) {
             killProg("Corrupted list; known element not found in call to SortedList_lookup()", 2);
         }
@@ -354,10 +467,10 @@ void* threadFunc(void* as_v) {
         // unlock
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_unlock(&listMutex);
+                pthread_mutex_unlock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                __sync_lock_release(&spinLock);
+                __sync_lock_release(spinlock);
                 break;
             default: break;
         }
@@ -366,16 +479,23 @@ void* threadFunc(void* as_v) {
             fprintf(stderr, "thread %ld found %ldth item\n", id, i);
         }
 
-        // lock
+        // already assigned, just lock
+        if (clock_gettime(CLOCK_MONOTONIC, &startTime) == -1) {
+            killProg("Unable to get time before obtaining lock during insertion", 1);
+        }
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_lock(&listMutex);
+                pthread_mutex_lock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                while (__sync_lock_test_and_set(&spinLock, 1)) while(spinLock);
+                while (__sync_lock_test_and_set(spinlock, 1));
                 break;
             default: break;
         }
+        if (clock_gettime(CLOCK_MONOTONIC, &endTime) == -1) {
+            killProg("Unable to get time after obtaining lock during insertion", 1);
+        }
+        lookdelLockTime += timeElapsed(&startTime, &endTime);
 
         int del = SortedList_delete(elmt);
         if (del == 1) {
@@ -385,15 +505,23 @@ void* threadFunc(void* as_v) {
         // unlock
         switch (syncType) {
             case LAB2_LIST_MUTEX:
-                pthread_mutex_unlock(&listMutex);
+                pthread_mutex_unlock(mutex);
                 break;
             case LAB2_LIST_SPINLOCK:
-                __sync_lock_release(&spinLock);
+                __sync_lock_release(spinlock);
                 break;
             default: break;
         }
     }
-    pthread_exit(NULL);
+    avgLockTime += lookdelLockTime / (2 * numIters);
+
+    /*
+     * calculate and return average lock time, using avgLockTime.
+     * three different means were added, so divide it by three
+     * to get the overall mean.
+     */
+    avgLockTime /= 3;
+    pthread_exit((void*) avgLockTime);
 }
 
 // As stated in Lab 2A, shamelessly ripped from StackOverflow.
@@ -403,11 +531,28 @@ char* randString() {
         killProg("Unable to create random key; error in malloc()", 1);
     }
     for (int i = 0; i < LAB2_LIST_RANDSTRLEN; i++) {
-        int setKey = rand() % randLen;
+        int setKey = rand() % strlen(randCharset);
         str[i] = randCharset[setKey];
     }
     str[LAB2_LIST_RANDSTRLEN] = '\0';
     return str;
+}
+
+// based on the "djb2" hashing algorithm.
+unsigned long strHash(const char* str) {
+    unsigned long hash = 5381;
+    for (int i = 0; str[i] != '\0'; i++) {
+        hash = ((hash << 5) + hash) + str[i];
+    }
+    return hash;
+}
+
+// return, in nanoseconds, the total time elapsed between the time at 'end' and the time at 'start'
+long long timeElapsed(struct timespec* start, struct timespec* end) {
+    long long seconds = end->tv_sec - start->tv_sec;
+    long long rawNanoseconds = end->tv_nsec - start->tv_nsec;
+    long long nanoseconds = (rawNanoseconds < 0) ? (BILLION + rawNanoseconds) : rawNanoseconds;
+    return (seconds * BILLION) + nanoseconds;
 }
 
 void killProg(const char* msg, int exitStat) {

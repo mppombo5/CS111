@@ -1,0 +1,46 @@
+#!/usr/local/bin/bash
+
+listexec="./lab2_list"
+
+if [[ $# -ne 3 ]] && [[ $# -ne 6 ]]; then
+    echo 'Only 3 or 6 variables!'
+    echo 'how many times, threads, iterations[, sync, yield, lists]'
+    exit 1
+else
+    max=$1
+    threads=$2
+    iters=$3
+    if [[ $# -eq 6 ]]; then
+        if [[ $4 == "0" ]]; then
+            syncArg=""
+        else
+            syncArg="-s $4"
+        fi
+        if [[ $5 == "0" ]]; then
+            yieldArg=""
+        else
+            yieldArg="-y $5"
+        fi
+        if [[ $6 == "0" ]]; then
+            listArg=""
+        else
+            listArg="-l $6"
+        fi
+    fi
+fi
+
+#while [[ $i -lt $max ]]; do
+for (( i = 0; i < $max; i++ )); do
+    if [[ $# -eq 3 ]]; then
+        $listexec -t $threads -i $iters
+    else
+        $listexec -t $threads -i $iters $syncArg $yieldArg $listArg
+#        if [[ $4 != "0" ]] && [[ $5 != "0" ]]; then
+#            $listexec -t $threads -i $iters -s $sync -y $yield
+#        elif [[ $4 == "0" ]]; then
+#            $listexec -t $threads -i $iters -y $yield
+#        else
+#            $listexec -t $threads -i $iters -s $sync
+#        fi
+    fi
+done

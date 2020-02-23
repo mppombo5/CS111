@@ -1,2 +1,4 @@
 # Reference files and the like
-*REF.c
+*REF*
+**.dSYM
+lab2_list
