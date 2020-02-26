@@ -7,9 +7,10 @@
 #ifndef PARTB_UTILITIES_H
 #define PARTB_UTILITIES_H
 
-const char* progName = "lab4b";
-const char* usage = "lab4b [--scale={F,C}] [--period=#] [--log={FILENAME}]";
-
 void killProg(const char* msg, int exitStat);
+
+double FtoC(double tempF);
+double CtoF(double tempC);
+double RawtoC(int raw);
 
 #endif //PARTB_UTILITIES_H
