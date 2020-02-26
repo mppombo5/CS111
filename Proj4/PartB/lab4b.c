@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
                 break;
             default:
                 fprintf(stderr, "%s\n", usage);
+                exit(1);
         }
         ch = getopt_long(argc, argv, optstring, options, &optIndex);
     }
@@ -90,8 +91,9 @@ int main(int argc, char** argv) {
     }
 
     // just make local variables for time report
-    struct tm* curTime;
-    time_t result;
+    struct tm* curLocaltime;
+    time_t curTime;
+    time_t lastSampleTime;
 
     // int to control output of reports (for START and STOP)
     int keepGoing = 1;
@@ -111,29 +113,39 @@ int main(int argc, char** argv) {
     stdinPoll.events = POLLIN;
     stdinPoll.revents = 0;
 
+    int firstRun = 1;
     // handle input from stdin and generate output from sensor
     while (runFlag) {
-        // temperature sensor
-        if (keepGoing) {
+        curTime = time(NULL);
+        /*
+         * temperature sensor. only run if it's the first sample,
+         * or if 'samplePeriod' has passed since the last one
+         */
+        if ((keepGoing && firstRun) || (keepGoing && (curTime - lastSampleTime >= samplePeriod))) {
+            if (firstRun) {
+                firstRun = 0;
+            }
             int rawTemp = mraa_aio_read(sensor);
             if (debug) {
                 fprintf(stderr, "rawTemp is %d\n", rawTemp);
             }
-            result = time(NULL);
+            curTime = time(NULL);
 
             double temp = RawtoC(rawTemp);
             if (debug) {
-                fprintf(stderr, "temp after raw to C is %.2f\n", temp);
+                fprintf(stderr, "temp after raw to C is %.1f\n", temp);
             }
             if (tempScale == LAB4_FAHRENHEIT) {
                 temp = CtoF(temp);
             }
 
-            curTime = localtime(&result);
+            curLocaltime = localtime(&curTime);
 
             // generate two characters each for hour, min, and sec
             char hour[5], min[5], sec[5];
-            int curHr = curTime->tm_hour, curMin = curTime->tm_min, curSec = curTime->tm_sec;
+            int curHr = curLocaltime->tm_hour;
+            int curMin = curLocaltime->tm_min;
+            int curSec = curLocaltime->tm_sec;
             if (sprintf(hour, (curHr < 10) ? "0%d" : "%d", curHr) < 0) {
                 killProg("Unable to generate hour string for log string", 1);
             }
@@ -145,7 +157,7 @@ int main(int argc, char** argv) {
             }
 
             // printf logString to stdout and the logfile
-            if (sprintf(logString, "%s:%s:%s %.2f\n", hour, min, sec, temp) < 0) {
+            if (sprintf(logString, "%s:%s:%s %.1f\n", hour, min, sec, temp) < 0) {
                 killProg("Unable to generate log string using sprintf()", 1);
             }
             if (printf("%s", logString) < 0) {
@@ -154,12 +166,7 @@ int main(int argc, char** argv) {
             if (logfile != NULL && fprintf(logfile, "%s", logString) < 0) {
                 killProg("Unable to print log string to log file", 1);
             }
-            sleep(samplePeriod);
-        }
-
-        // just to ease up on the system so it's not making millions of poll() calls a second while not sampling
-        if (!keepGoing) {
-            sleep(1);
+            lastSampleTime = time(NULL);
         }
 
         // handle input from stdin
@@ -190,7 +197,7 @@ int main(int argc, char** argv) {
                     }
 
                     if (j >= charsRead) {
-                        // TODO: move remaining characters to start of buffer and offset accordingly
+                        break;
                     }
 
                     /*
@@ -264,6 +271,21 @@ int main(int argc, char** argv) {
                     }
                     j++;
                 }
+                // handle the case when the buffer was filled up and the last command wasn't '\n' terminated
+                if (j >= LAB4_BUFFERSIZE && buffer[LAB4_BUFFERSIZE-1] != '\n') {
+                    // can't do anything if the buffer can't handle at least one command
+                    if (i == 0) {
+                        killProg("Buffer size cannot handle sent command; exiting with code 1.\n(Consider sending smaller commands.)", 1);
+                    }
+                    // i points to the start of the last command
+                    int k = 0;
+                    while (i < LAB4_BUFFERSIZE) {
+                        buffer[k] = buffer[i];
+                        i++;
+                        k++;
+                    }
+                    bufOffset = k;
+                }
             }
         }
     }
@@ -272,12 +294,12 @@ int main(int argc, char** argv) {
         killProg("Error closing analog IO pin on shutdown", 1);
     }
 
-    result = time(NULL);
-    curTime = localtime(&result);
+    curTime = time(NULL);
+    curLocaltime = localtime(&curTime);
 
     // get two characters for hour, minute, and second
     char hour[5], min[5], sec[5];
-    int curHr = curTime->tm_hour, curMin = curTime->tm_min, curSec = curTime->tm_sec;
+    int curHr = curLocaltime->tm_hour, curMin = curLocaltime->tm_min, curSec = curLocaltime->tm_sec;
     if (sprintf(hour, (curHr < 10) ? "0%d" : "%d", curHr) < 0) {
         killProg("Unable to generate hour string for log string", 1);
     }
