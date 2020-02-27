@@ -36,7 +36,7 @@ double RawtoC(int raw) {
     int B = 4275;       // magic number
     int R0 = 100000;    // magic constant
 
-    double R = 1023.0 / (raw - 1.0);
+    double R = 1023.0/raw - 1.0;
     R *= R0;
 
     // somehow get temp in C from this
