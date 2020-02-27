@@ -11,12 +11,17 @@ Cfiles = lab4b.c utilities.c
 Hfiles = utilities.h
 src = $(Cfiles) $(Hfiles)
 submission = Makefile README
+tarfiles = $(src) $(submission) smoke.sh
 
 # files created by program
 madefiles = $(tarname) lab4b
 
 default: $(src)
 	gcc $(Cfiles) -o lab4b $(opts)
+
+.PHONY: check
+check: default
+	bash smoke.sh
 
 .PHONY: clean
 clean:
@@ -26,4 +31,4 @@ clean:
 # in case of fatal forgetfulness to replace the #include
 .PHONY: dist
 dist:
-	tar -cvzf $(tarname) $(src) $(submission)
+	tar -cvzf $(tarname) $(tarfiles)

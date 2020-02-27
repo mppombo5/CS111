@@ -10,7 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <poll.h>
-#include "mraa-include/mraa.h"
+#include <mraa.h>
 #include "utilities.h"
 
 #define LAB4_FAHRENHEIT 'F'
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     char tempScale = LAB4_FAHRENHEIT;
     int samplePeriod = 1;       // global variable for sampling period
     FILE* logfile = NULL;
-    int debug = 0;
+    _Bool debug = 0;
     struct option options[] = {
             {"scale", required_argument, NULL, 's'},
             {"period", required_argument, NULL, 'p'},
@@ -49,21 +49,25 @@ int main(int argc, char** argv) {
                 }
                 tempScale = *optarg;
                 break;
+
             case 'p':
                 samplePeriod = atoi(optarg);
                 if (samplePeriod <= 0) {
                     killProg("'--period' argument must be strictly greater than 0", 1);
                 }
                 break;
+
             case 'l':
                 logfile = fopen(optarg, "w+");
                 if (logfile == NULL) {
                     killProg("Unable to open specified logfile", 1);
                 }
                 break;
+
             case 'd':
                 debug = 1;
                 break;
+
             default:
                 fprintf(stderr, "%s\n", usage);
                 exit(1);
@@ -95,10 +99,10 @@ int main(int argc, char** argv) {
     time_t curTime;
     time_t lastSampleTime;
 
-    // int to control output of reports (for START and STOP)
-    int keepGoing = 1;
+    // bool to control output of reports (for START and STOP)
+    _Bool keepGoing = 1;
 
-    // buffer to log things to the logfile, if supplied
+    // buffer to log time and temperature to stdout
     char logString[30];
 
     // buffer variables for reading commands
@@ -141,25 +145,12 @@ int main(int argc, char** argv) {
 
             curLocaltime = localtime(&curTime);
 
-            // generate two characters each for hour, min, and sec
-            char hour[5], min[5], sec[5];
-            int curHr = curLocaltime->tm_hour;
-            int curMin = curLocaltime->tm_min;
-            int curSec = curLocaltime->tm_sec;
-            if (sprintf(hour, (curHr < 10) ? "0%d" : "%d", curHr) < 0) {
-                killProg("Unable to generate hour string for log string", 1);
-            }
-            if (sprintf(min, (curMin < 10) ? "0%d" : "%d", curMin) < 0) {
-                killProg("Unable to generate minute string for log string", 1);
-            }
-            if (sprintf(sec, (curSec < 10) ? "0%d" : "%d", curSec) < 0) {
-                killProg("Unable to generate second string for log string", 1);
-            }
-
-            // printf logString to stdout and the logfile
-            if (sprintf(logString, "%s:%s:%s %.1f\n", hour, min, sec, temp) < 0) {
+            // generate string for logging, and pad the hour/min/sec with 0s
+            if (sprintf(logString, "%02d:%02d:%02d %.1f\n", curLocaltime->tm_hour, curLocaltime->tm_min, curLocaltime->tm_sec, temp) < 0) {
                 killProg("Unable to generate log string using sprintf()", 1);
             }
+
+            // print the log string to stdout and logfile
             if (printf("%s", logString) < 0) {
                 killProg("Unable to print log string to stdout", 1);
             }
@@ -297,23 +288,12 @@ int main(int argc, char** argv) {
     curTime = time(NULL);
     curLocaltime = localtime(&curTime);
 
-    // get two characters for hour, minute, and second
-    char hour[5], min[5], sec[5];
-    int curHr = curLocaltime->tm_hour, curMin = curLocaltime->tm_min, curSec = curLocaltime->tm_sec;
-    if (sprintf(hour, (curHr < 10) ? "0%d" : "%d", curHr) < 0) {
-        killProg("Unable to generate hour string for log string", 1);
-    }
-    if (sprintf(min, (curMin < 10) ? "0%d" : "%d", curMin) < 0) {
-        killProg("Unable to generate minute string for log string", 1);
-    }
-    if (sprintf(sec, (curSec < 10) ? "0%d" : "%d", curSec) < 0) {
-        killProg("Unable to generate second string for log string", 1);
+    // generate string for SHUTDOWN message; 0-pad the time again
+    if (sprintf(logString, "%02d:%02d:%02d SHUTDOWN\n", curLocaltime->tm_hour, curLocaltime->tm_min, curLocaltime->tm_sec) < 0) {
+        killProg("Unable to generate final SHUTDOWN log string", 1);
     }
 
-    // print SHUTDOWN string to stdout and log file
-    if (sprintf(logString, "%s:%s:%s SHUTDOWN\n", hour, min, sec) < 0) {
-        killProg("Unable to generate log string using sprintf()", 1);
-    }
+    // print shutdown message to stdout and logfile
     if (printf("%s", logString) < 0) {
         killProg("Error in last SHUTDOWN printf call", 1);
     }

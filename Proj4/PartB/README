@@ -1,3 +1,11 @@
 NAME: Matthew Pombo
 UID: 405140036
 EMAIL: mppombo5@gmail.com
+
+Included files:
+- lab4b.c: the main C source code for my lab4b program.
+- utilities.h: a header declaring prototypes for many frequently-used functions in my lab4b program.
+- utilities.c: the C source code for the functions declared in utilities.h.
+- Makefile: the Makefile for making the targets.
+- smoke.sh: a bash script for a very basic smoke check. It basically makes sure it runs and output to a log file.
+- README: this.
