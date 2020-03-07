@@ -1,2 +1,4 @@
 # images and binary things
 *.img
+fs*
+lab3a
