@@ -1,22 +1,25 @@
 #include <iostream>
-#include <cstdlib>
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
+#include <ctime>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include "ext2_fs.h"
 
+unsigned int blockSize;
+
 const char* const progName  = "lab3a";
-unsigned int                  blockSize;
 const int SUPERBLOCK_OFFSET = 1024;
 
 void    killProg(const char* msg, int exitStat);
 __u32   getBlockOffset(__u32 blockID);
-void    printSuperblockInfo(struct ext2_super_block* sBlock);
-void    printGroupInfo(struct ext2_group_desc* gpDesc, struct ext2_super_block* sBlock);
-void    printBlockBitmap(__u32 blockID, int imgfd, __u32 numBlocks);
-void    printInodeBitmap(__u32 blockID, int imgfd, __u32 numInodes);
+void    printSuperblockInfo(ext2_super_block* sBlock);
+void    printGroupInfo(ext2_group_desc* gpDesc, ext2_super_block* sBlock);
 void    printBitmap(__u32 blockID, int imgfd, __u32 numObjects, const char* header);
+void    printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize);
+void    printDirEntries(__u32* blockArr, __u32 inodeNum);
+void    timeString(__u32 time, char* str);
 
 int main(int argc, char** argv) {
     if (argc != 2) {
@@ -28,7 +31,7 @@ int main(int argc, char** argv) {
         killProg("Unable to open specified file", 1);
     }
 
-    struct ext2_super_block superblock;
+    ext2_super_block superblock;
     // superblock is *always* at the 1024th byte of the file
     ssize_t bytesRead = pread(imgfd, &superblock, sizeof(struct ext2_super_block), SUPERBLOCK_OFFSET);
     // failed if we didn't read in the whole struct
@@ -49,7 +52,7 @@ int main(int argc, char** argv) {
     printSuperblockInfo(&superblock);
 
     // get info from the group descriptor
-    struct ext2_group_desc gpDesc;
+    ext2_group_desc gpDesc;
     // group descriptor will always be one block after block containing superblock
     __u32 groupBlock = superblock.s_first_data_block + 1;
     bytesRead = pread(imgfd, &gpDesc, sizeof(struct ext2_group_desc), getBlockOffset(groupBlock));
@@ -61,17 +64,22 @@ int main(int argc, char** argv) {
      * all this calculation does is say whether all the system's blocks and
      * inodes are in this group, or if it has as many per group as allowed
      */
-    __u32 blocksInGroup = (totalBlocks >= blocksPerGroup) ? totalBlocks : (totalBlocks % blocksPerGroup);
-    __u32 inodesInGroup = (totalInodes >= inodesPerGroup) ? totalInodes : (totalInodes % inodesPerGroup);
+    __u32 blocksInGroup = (totalBlocks >= blocksPerGroup) ? blocksPerGroup : (totalBlocks % blocksPerGroup);
+    __u32 inodesInGroup = (totalInodes >= inodesPerGroup) ? inodesPerGroup : (totalInodes % inodesPerGroup);
 
+    // output the group descriptor info
     printGroupInfo(&gpDesc, &superblock);
 
+    // print the free blocks from the block bitmap
     __u32 blockBitmap = gpDesc.bg_block_bitmap;
     printBitmap(blockBitmap, imgfd, blocksInGroup, "BFREE");
 
+    // print the free inodes from the inode bitmap
     __u32 inodeBitmap = gpDesc.bg_inode_bitmap;
     printBitmap(inodeBitmap, imgfd, inodesInGroup, "IFREE");
 
+    // print inode information
+    printInodes(gpDesc.bg_inode_table, imgfd, inodesInGroup, superblock.s_inode_size);
 
     if (close(imgfd) == -1) {
         killProg("Unable to close image file", 1);
@@ -94,7 +102,7 @@ __u32 getBlockOffset(__u32 blockID) {
     return (blockSize * blockID);
 }
 
-void printSuperblockInfo(struct ext2_super_block* sBlock) {
+void printSuperblockInfo(ext2_super_block* sBlock) {
     // generate csv line for superblock
     std::cout << "SUPERBLOCK,"
               << sBlock->s_blocks_count << ','       // total number of blocks
@@ -106,7 +114,7 @@ void printSuperblockInfo(struct ext2_super_block* sBlock) {
               << sBlock->s_first_ino << std::endl;   // first free inode
 }
 
-void printGroupInfo(struct ext2_group_desc* gpDesc, struct ext2_super_block* sBlock) {
+void printGroupInfo(ext2_group_desc* gpDesc, ext2_super_block* sBlock) {
     /*
      * all this calculation does is say whether all the system's blocks and
      * inodes are in this group, or if it has as many per group as allowed
@@ -125,48 +133,6 @@ void printGroupInfo(struct ext2_group_desc* gpDesc, struct ext2_super_block* sBl
               << gpDesc->bg_block_bitmap << ','         // block id for block bitmap
               << gpDesc->bg_inode_bitmap << ','         // block id for inode bitmap
               << gpDesc->bg_inode_table << std::endl;   // id of first block of inodes
-}
-
-void printBlockBitmap(__u32 blockID, int imgfd, __u32 numBlocks) {
-    __u8* bitmapArr = new __u8[blockSize];
-    ssize_t bytesRead = pread(imgfd, bitmapArr, numBlocks, getBlockOffset(blockID));
-    if (bytesRead != numBlocks) {
-        killProg("Error in pread() for block bitmap", 1);
-    }
-
-    // 8 blocks for every byte; TA guaranteed # blocks will be a multiple of 8
-    __u32 bytesToCheck = numBlocks  >> 3U;
-
-    for (__u32 i = 0; i < bytesToCheck; i++) {
-        __u8 bitMask = 1;
-        __u8 curByte = bitmapArr[i];
-        for (int j = 0; j < 8; j++) {
-            if (!(curByte & bitMask)) {
-                // calculate the number of the block this represents
-                std::cout << "BFREE," << (i*8 + j) + 1 << std::endl;
-            }
-            bitMask <<= 1U;
-        }
-    }
-
-    delete [] bitmapArr;
-}
-
-void printInodeBitmap(__u32 blockID, int imgfd, __u32 numInodes) {
-    __u8* bitmapArr = new __u8[blockSize];
-    ssize_t bytesRead = pread(imgfd, bitmapArr, numInodes, getBlockOffset(blockID));
-    if (bytesRead != numInodes) {
-        killProg("Error in pread() for inode bitmap", 1);
-    }
-
-    // 8 inodes for every byte, same as block function
-    __u32 bytesToCheck = numInodes >> 3U;
-
-    for (__u32 i = 0; i < bytesToCheck; i++) {
-
-    }
-
-    delete [] bitmapArr;
 }
 
 // we can just roll the block and inode bitmaps all into one function
@@ -191,8 +157,111 @@ void printBitmap(__u32 blockID, int imgfd, __u32 numObjects, const char* header)
             bitMask <<= 1U;
         }
     }
-
     delete [] bitmapArr;
+}
+
+void printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize) {
+    ext2_inode* inodes = new ext2_inode[numInodes];
+    ssize_t bytesRead;
+    for (__u32 i = 0; i < numInodes; i++) {
+        bytesRead = pread(imgfd, inodes + i, inodeSize, getBlockOffset(blockID) + (i * inodeSize));
+        if (bytesRead != inodeSize) {
+            killProg("Error in pread() for inode structs", 1);
+        }
+    }
+
+    char fileType;
+    for (__u32 i = 0; i < numInodes; i++) {
+        ext2_inode* cur = inodes + i;
+        // only operate on allocated inodes
+        if (cur->i_mode != 0 && cur->i_links_count != 0) {
+            __u16 mode = cur->i_mode;
+            std::cout << "INODE" << ','
+                      << i + 1 << ',';  // inode number (1-indexed)
+            // test if inode is a symlink
+            if (S_ISLNK(mode)) {
+                fileType = 's';
+            }
+            // directory
+            else if (S_ISDIR(mode)) {
+                fileType = 'd';
+            }
+            // regular file
+            else if (S_ISREG(mode)) {
+                fileType = 'f';
+            }
+            // anything else
+            else {
+                fileType = '?';
+            }
+            std::cout << fileType << ','            // filetype
+                      << std::oct << (cur->i_mode & 0xFFFU) << std::dec << ','  // ownership mode (lower 12 bits)
+                      << cur->i_uid << ','          // user id
+                      << cur->i_gid << ','          // group id
+                      << cur->i_links_count << ','; // link count
+
+            // print time strings
+            char ctime[20], mtime[20], atime[20];
+            timeString(cur->i_ctime, ctime);
+            timeString(cur->i_mtime, mtime);
+            timeString(cur->i_atime, atime);
+            std::cout << ctime << ','   // creation/change time
+                      << mtime << ','   // modification time
+                      << atime << ',';  // access time
+
+            // get file size, taking into account the upper 64 bits for regular files
+            unsigned long size = cur->i_dir_acl;
+            size <<= 32U;
+            size |= cur->i_size;
+            std::cout << size << ','    // size of file
+                      << cur->i_blocks; // number of 512-byte blocks
+
+            // scan each inode for the rest
+            switch (fileType) {
+                case 'd':
+                case 'f':
+                    for (int j = 0; j < EXT2_N_BLOCKS; j++) {
+                        std::cout << ',' << cur->i_block[j];   // number from array of block addresses
+                    }
+                    std::cout << std::endl;
+                    break;
+                case 's':
+                    // why 60? ...because the spec said so.
+                    if (size >= 60) {
+                        for (int j = 0; j < EXT2_N_BLOCKS; j++) {
+                            std::cout << ',' << cur->i_block[j];    // might not even show up most of the time
+                        }
+                    }
+                    std::cout << std::endl;
+                    break;
+                default:
+                    std::cout << std::endl;
+                    break;
+            }
+        }
+    }
+    delete [] inodes;
+}
+
+void printDirEntries(__u32* blockArr, __u32 inodeNum) {
+    // scan the first 12 (direct) blocks from blockArr
+    for (int i = 0; i < EXT2_NDIR_BLOCKS; i++) {
+
+    }
+}
+
+// easier to just use sprintf instead of making a ton of if-statements with std::string's.
+void timeString(__u32 time, char* str) {
+    time_t newTime = time;
+    std::tm* tm = std::gmtime(&newTime);
+    if (tm == nullptr) {
+        killProg("Error in gmtime()", 1);
+    }
+
+    int res = sprintf(str, "%02d/%02d/%02d %02d:%02d:%02d", tm->tm_mon + 1, tm->tm_mday, tm->tm_year % 100, tm->tm_hour, tm->tm_min, tm->tm_sec);
+    if (res < 0) {
+        killProg("Error in printf() for time format", 1);
+    }
 }
 
 
