@@ -6,21 +6,22 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <getopt.h>
 #include <string.h>
-#include <strings.h>
 #include <ctype.h>
-#include <time.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <mraa.h>
 #include "utilities.h"
 
 const char* usage = "lab4c_tcp --id={9-digit #} --host={hostname} --log={filename} {port #}\
                     [--period=#] [--scale={F,C}]";
+
+void sampleTemp_tls(SSL* ssl, mraa_aio_context* sensor, scale_t tempScale, FILE* log, time_t* curTime);
 
 volatile _Bool RUN_FLAG = 1;
 _Bool debug = 0;
@@ -117,7 +118,22 @@ int main(int argc, char* argv[]) {
         killProg("Unable to initialize temperature sensor AIO pin", 1);
     }
 
-    // now open TCP connection
+    // initialize SSL
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+
+    const SSL_METHOD* method;
+    SSL_CTX* ctx;
+
+    method = TLSv1_client_method();
+    ctx = SSL_CTX_new(method);
+    if (ctx == NULL) {
+        ERR_print_errors_fp(stderr);
+        exit(1);
+    }
+
+    // open TCP connection
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         killProg("Error on socket()", 1);
@@ -132,20 +148,31 @@ int main(int argc, char* argv[]) {
     bzero((char*) &servAddr, sizeof(servAddr));
     servAddr.sin_family = AF_INET;
     bcopy((char*) server->h_addr_list[0], (char*) &servAddr.sin_addr.s_addr, server->h_length);
-    servAddr.sin_port = htons(18000);
-
-    if (debug) {
-        fprintf(stderr, "about to connect() ...\n");
-    }
+    servAddr.sin_port = htons(19000);
 
     if (connect(sockfd, (struct sockaddr*) &servAddr, sizeof(servAddr)) == -1) {
         killProg("Error on connect()", 1);
     }
 
-    if (debug) {
-        fprintf(stderr, "connect() successful\n");
+    // create SSL structure
+    SSL* ssl = SSL_new(ctx);
+    if (ssl == NULL) {
+        ERR_print_errors_fp(stderr);
+        exit(1);
     }
 
+    // set which file descriptor output is going to
+    if (SSL_set_fd(ssl, sockfd) == 0) {
+        ERR_print_errors_fp(stderr);
+        exit(1);
+    }
+
+    if (SSL_connect(ssl) <= 0) {
+        ERR_print_errors_fp(stderr);
+        exit(1);
+    }
+
+    // now we can read and write across the connection
     // buffer to log time and temperature to socket
     char logString[30];
 
@@ -153,7 +180,7 @@ int main(int argc, char* argv[]) {
     if (sprintf(logString, "ID=%09d\n", idNo) < 0) {
         killProg("Unable to format ID message", 1);
     }
-    if (write(sockfd, logString, sizeof(char) * strlen(logString)) == -1) {
+    if (SSL_write(ssl, logString, sizeof(char) * strlen(logString)) == -1) {
         killProg("Error writing ID message to socket", 1);
     }
     fprintf(logfile, "ID=%09d\n", idNo);
@@ -189,7 +216,7 @@ int main(int argc, char* argv[]) {
             if (isFirstRun) {
                 isFirstRun = 0;
             }
-            sampleTemp(sockfd, &sensor, tempScale, logfile, &curTime);
+            sampleTemp_tls(ssl, &sensor, tempScale, logfile, &curTime);
             lastSampleTime = time(NULL);
         }
 
@@ -206,7 +233,7 @@ int main(int argc, char* argv[]) {
             }
 
             if (inputPoll.revents & POLLIN) {
-                charsRead = read(sockfd, buffer + bufOffset, sizeof(char) * (LAB4_TLS_BUFFERSIZE - bufOffset));
+                charsRead = SSL_read(ssl, buffer + bufOffset, sizeof(char) * (LAB4_TLS_BUFFERSIZE - bufOffset));
                 if (debug) {
                     fprintf(stderr, "read %d characters\n", charsRead);
                 }
@@ -221,11 +248,11 @@ int main(int argc, char* argv[]) {
                         break;
                     }
 
-                    /*
-                     * if buffer[j] is \n, then we have a new command to parse.
-                     * 'i' will point to the start of the new command, so replace
-                     * '\n' with '\0' so that library string functions work more easily.
-                     */
+                        /*
+                         * if buffer[j] is \n, then we have a new command to parse.
+                         * 'i' will point to the start of the new command, so replace
+                         * '\n' with '\0' so that library string functions work more easily.
+                         */
                     else if (buffer[j] == '\n') {
                         buffer[j] = '\0';
                         char* cmd = buffer + i;
@@ -324,12 +351,48 @@ int main(int argc, char* argv[]) {
     }
 
     // print shutdown message to socket and logfile
-    if (write(sockfd, logString, sizeof(char) * strlen(logString)) == -1) {
+    if (SSL_write(ssl, logString, sizeof(char) * strlen(logString)) == -1) {
         killProg("Error in last SHUTDOWN write() call", 1);
     }
     if (fprintf(logfile, "%s", logString) < 0) {
         killProg("Error in last SHUTDOWN fprintf to logfile", 1);
     }
 
+    // shutdown and free SSL stuff
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+
     return 0;
+}
+
+void sampleTemp_tls(SSL* ssl, mraa_aio_context* sensor, scale_t tempScale, FILE* log, time_t* curTime) {
+    int rawTemp = mraa_aio_read(*sensor);
+    if (debug) {
+        fprintf(stderr, "rawTemp is %d\n", rawTemp);
+    }
+
+    double temp = RawtoC(rawTemp);
+    if (debug) {
+        fprintf(stderr, "temp after raw to C is %.1f\n", temp);
+    }
+    if (tempScale == LAB4_FAHRENHEIT) {
+        temp = CtoF(temp);
+    }
+
+    struct tm* curLocaltime = localtime(curTime);
+
+    char logString[30];
+
+    // generate string for logging, and pad the hour/min/sec with 0s
+    if (sprintf(logString, "%02d:%02d:%02d %.1f\n", curLocaltime->tm_hour, curLocaltime->tm_min, curLocaltime->tm_sec, temp) < 0) {
+        killProg("Unable to generate log string using sprintf()", 1);
+    }
+
+    // print the log string to socket and logfile
+    if (SSL_write(ssl, logString, sizeof(char) * strlen(logString)) == -1) {
+        killProg("Unable to print log string to socket", 1);
+    }
+    if (fprintf(log, "%s", logString) < 0) {
+        killProg("Unable to print log string to log file", 1);
+    }
 }

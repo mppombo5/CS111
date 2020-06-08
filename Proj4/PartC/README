@@ -1,0 +1,11 @@
+NAME: Matthew Pombo
+EMAIL: mppombo5@gmail.com
+UID: 405140036
+
+Included files:
+- README: this
+- Makefile: makefile for necessary targets
+- utilities.h/.c: declarations and implementations for various functions that
+  are shared between the two versions of my program
+- lab4c_tls/tcp.c: the two versions of my program, one using TLS and one
+  using TCP.
