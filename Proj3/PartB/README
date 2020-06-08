@@ -1,3 +1,8 @@
 NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
+
+included files:
+- lab3b.py: Python source file for lab 3b
+- Makefile: makefile for targets
+- README: this file

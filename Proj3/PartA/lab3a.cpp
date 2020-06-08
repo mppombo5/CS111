@@ -3,11 +3,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <ctime>
+#include <cstring>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "ext2_fs.h"
 
-unsigned int blockSize;
+__u32 blockSize;
 
 const char* const progName  = "lab3a";
 const int SUPERBLOCK_OFFSET = 1024;
@@ -16,9 +17,10 @@ void    killProg(const char* msg, int exitStat);
 __u32   getBlockOffset(__u32 blockID);
 void    printSuperblockInfo(ext2_super_block* sBlock);
 void    printGroupInfo(ext2_group_desc* gpDesc, ext2_super_block* sBlock);
-void    printBitmap(__u32 blockID, int imgfd, __u32 numObjects, const char* header);
-void    printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize);
-void    printDirEntries(__u32* blockArr, __u32 inodeNum);
+void    printBitmap(int imgfd, __u32 blockID, __u32 numObjects, const char* header);
+void    printInodes(int imgfd, __u32 blockID, __u32 numInodes, __u16 inodeSize);
+void    printDirEntries(int imgfd, const __u32* blockArr, __u32 dirInode);
+void    printIndirect(int imgfd, __u32 blockID, __u32 logicalOffset, __u32 ownerInode, int indirLevel);
 void    timeString(__u32 time, char* str);
 
 int main(int argc, char** argv) {
@@ -72,14 +74,14 @@ int main(int argc, char** argv) {
 
     // print the free blocks from the block bitmap
     __u32 blockBitmap = gpDesc.bg_block_bitmap;
-    printBitmap(blockBitmap, imgfd, blocksInGroup, "BFREE");
+    printBitmap(imgfd, blockBitmap, blocksInGroup, "BFREE");
 
     // print the free inodes from the inode bitmap
     __u32 inodeBitmap = gpDesc.bg_inode_bitmap;
-    printBitmap(inodeBitmap, imgfd, inodesInGroup, "IFREE");
+    printBitmap(imgfd, inodeBitmap, inodesInGroup, "IFREE");
 
     // print inode information
-    printInodes(gpDesc.bg_inode_table, imgfd, inodesInGroup, superblock.s_inode_size);
+    printInodes(imgfd, gpDesc.bg_inode_table, inodesInGroup, superblock.s_inode_size);
 
     if (close(imgfd) == -1) {
         killProg("Unable to close image file", 1);
@@ -136,7 +138,7 @@ void printGroupInfo(ext2_group_desc* gpDesc, ext2_super_block* sBlock) {
 }
 
 // we can just roll the block and inode bitmaps all into one function
-void printBitmap(__u32 blockID, int imgfd, __u32 numObjects, const char* header) {
+void printBitmap(int imgfd, __u32 blockID, __u32 numObjects, const char *header) {
     __u8* bitmapArr = new __u8[blockSize];
     ssize_t bytesRead = pread(imgfd, bitmapArr, numObjects, getBlockOffset(blockID));
     if (bytesRead != numObjects) {
@@ -160,7 +162,7 @@ void printBitmap(__u32 blockID, int imgfd, __u32 numObjects, const char* header)
     delete [] bitmapArr;
 }
 
-void printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize) {
+void printInodes(int imgfd, __u32 blockID, __u32 numInodes, __u16 inodeSize) {
     ext2_inode* inodes = new ext2_inode[numInodes];
     ssize_t bytesRead;
     for (__u32 i = 0; i < numInodes; i++) {
@@ -216,12 +218,15 @@ void printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize) {
             std::cout << size << ','    // size of file
                       << cur->i_blocks; // number of 512-byte blocks
 
-            // scan each inode for the rest
+            // scan each inode for the
+            __u32* blockArr = cur->i_block;
+            bool searchIndir = false;
             switch (fileType) {
                 case 'd':
                 case 'f':
+                    searchIndir = true;
                     for (int j = 0; j < EXT2_N_BLOCKS; j++) {
-                        std::cout << ',' << cur->i_block[j];   // number from array of block addresses
+                        std::cout << ',' << blockArr[j];   // number from array of block addresses
                     }
                     std::cout << std::endl;
                     break;
@@ -229,7 +234,7 @@ void printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize) {
                     // why 60? ...because the spec said so.
                     if (size >= 60) {
                         for (int j = 0; j < EXT2_N_BLOCKS; j++) {
-                            std::cout << ',' << cur->i_block[j];    // might not even show up most of the time
+                            std::cout << ',' << blockArr[j];    // might not even show up most of the time
                         }
                     }
                     std::cout << std::endl;
@@ -238,16 +243,92 @@ void printInodes(__u32 blockID, int imgfd, __u32 numInodes, __u16 inodeSize) {
                     std::cout << std::endl;
                     break;
             }
+
+            // print directory entries
+            if (fileType == 'd') {
+                printDirEntries(imgfd, blockArr, i + 1);
+            }
+
+            // print indirect entries, if we need to (directories and regular files)
+            // offsets determined by TA post on Piazza
+            if (searchIndir) {
+                if (blockArr[EXT2_IND_BLOCK] != 0) {
+                    printIndirect(imgfd, blockArr[EXT2_IND_BLOCK], 12, i + 1, 1);
+                }
+                if (blockArr[EXT2_DIND_BLOCK] != 0) {
+                    printIndirect(imgfd, blockArr[EXT2_DIND_BLOCK], 256 + 12, i + 1, 2);
+                }
+                if (blockArr[EXT2_TIND_BLOCK] != 0) {
+                    printIndirect(imgfd, blockArr[EXT2_TIND_BLOCK], 65536 + 256 + 12, i + 1, 3);
+                }
+            }
         }
     }
     delete [] inodes;
 }
 
-void printDirEntries(__u32* blockArr, __u32 inodeNum) {
+void printDirEntries(int imgfd, const __u32 *blockArr, __u32 dirInode) {
+    // directory entry struct to work with
+    ext2_dir_entry entry;
+    // indexing array to tell which directory entry we're looking at
+    __u32 offset;
     // scan the first 12 (direct) blocks from blockArr
     for (int i = 0; i < EXT2_NDIR_BLOCKS; i++) {
+        __u32 curBlock = blockArr[i];
+        if (curBlock != 0) {
+            offset = 0;
+            while (offset < blockSize) {
+                ssize_t bytesRead = pread(imgfd, &entry, sizeof(ext2_dir_entry), offset + getBlockOffset(curBlock));
+                if (bytesRead != sizeof(ext2_dir_entry)) {
+                    killProg("Error in pread() for directory entry", 1);
+                }
+                // only scan if the inode is non-zero
+                if (entry.inode != 0) {
+                    std::cout << "DIRENT,"
+                              << dirInode << ','        // inode of the parent directory
+                              << offset << ','          // offset within data block
+                              << entry.inode << ','     // inode number of entry
+                              << entry.rec_len << ','   // length of entry
+                              << (unsigned short) entry.name_len << ','     // length of entry name (cast so it's not
+                                                                            // interpreted as an integer)
+                              << '\'' << entry.name << '\'' << std::endl;   // actual entry name
+                }
 
+                offset += entry.rec_len;
+            }
+        }
     }
+}
+
+void printIndirect(int imgfd, __u32 blockID, __u32 logicalOffset, __u32 ownerInode, int indirLevel) {
+    // base case
+    if (indirLevel == 0) {
+        return;
+    }
+
+    // whole block is an array of __u32's
+    __u32 numBlocks = blockSize / sizeof(__u32);
+    __u32* blockArr = new __u32[numBlocks];
+    ssize_t bytesRead = pread(imgfd, blockArr, blockSize, getBlockOffset(blockID));
+    if (bytesRead != blockSize) {
+        killProg("Error on pread() for indirect blocks", 1);
+    }
+
+    for (__u32 i = 0; i < numBlocks; i++) {
+        if (blockArr[i] != 0) {
+            std::cout << "INDIRECT,"
+                      << ownerInode << ','      // inode of the owning file
+                      << indirLevel << ','      // level of indirection
+                      << logicalOffset << ','   // byte offset, wonky calculations
+                      << blockID << ','         // parent block ID
+                      << blockArr[i] << std::endl;  // current block ID
+
+            printIndirect(imgfd, blockArr[i], logicalOffset, ownerInode, indirLevel - 1);
+        }
+        logicalOffset += (1U << (8U * (indirLevel - 1)));
+    }
+
+    delete [] blockArr;
 }
 
 // easier to just use sprintf instead of making a ton of if-statements with std::string's.

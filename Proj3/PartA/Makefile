@@ -5,8 +5,8 @@
 UID = 405140036
 tarname = lab3a-$(UID).tar.gz
 execname = lab3a
-opts = -Wall -Wextra
-CC = clang++
+opts = -Wall -Wextra -static-libstdc++
+CC = g++
 
 # File categories
 src = lab3a.cpp ext2_fs.h
@@ -19,7 +19,7 @@ default: $(src)
 
 .PHONY: dist
 dist:
-	tar -cvzf $(tarname) $(submission)
+	tar -cvzf $(tarname) $(submission) $(src)
 
 .PHONY: clean
 clean:

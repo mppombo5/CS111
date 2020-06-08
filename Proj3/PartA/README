@@ -1,3 +1,9 @@
 NAME: Matthew Pombo
 EMAIL: mppombo5@gmail.com
 ID: 405140036
+
+Included files:
+- ext2_fs.h: the provided header file for OS-related structs
+- lab3a.cpp: my C++ source file
+- Makefile: the makefile to build specified targets
+- README: this
